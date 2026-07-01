@@ -1,8 +1,19 @@
+# Data (local-only)
 videos.json
 videos.json.bak
 Ver-mais-tarde-youtube.md
-__pycache__/main.cpython-313.pyc
-playlist_58353859-cfbc-4d37-9796-11877808c8fb_categorized.json
-.gitignore
-playlist_58353859-cfbc-4d37-9796-11877808c8fb.json
-playlist_58353859-cfbc-4d37-9796-11877808c8fb_stripped.json
+playlist_*.json
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+myenv/
+*.egg-info/
+.pytest_cache/
