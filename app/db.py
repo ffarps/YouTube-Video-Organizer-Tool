@@ -247,6 +247,173 @@ def videos_by_theme(
     return [_row_to_video(r) for r in conn.execute(query, params)]
 
 
+def remove_theme_assignment(
+    conn: sqlite3.Connection, video_id: str, theme_name: str
+) -> bool:
+    cur = conn.execute(
+        """
+        DELETE FROM video_themes
+        WHERE video_id = ? AND theme_id = (SELECT id FROM themes WHERE name = ?)
+        """,
+        (video_id, theme_name),
+    )
+    return cur.rowcount > 0
+
+
+# --- embeddings -------------------------------------------------------------
+
+def videos_missing_embedding(conn: sqlite3.Connection, limit: int = 500) -> List[dict]:
+    return [
+        _row_to_video(r)
+        for r in conn.execute(
+            """
+            SELECT v.*, NULL AS watch_status, NULL AS rating FROM videos v
+            WHERE v.embedding IS NULL LIMIT ?
+            """,
+            (limit,),
+        )
+    ]
+
+
+def save_embedding(conn: sqlite3.Connection, video_id: str, blob: bytes) -> None:
+    conn.execute("UPDATE videos SET embedding = ? WHERE id = ?", (blob, video_id))
+
+
+def embedding_counts(conn: sqlite3.Connection) -> dict:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END) AS embedded
+        FROM videos
+        """
+    ).fetchone()
+    return {"total": row["total"], "embedded": row["embedded"] or 0}
+
+
+def theme_member_embeddings(conn: sqlite3.Connection) -> List[dict]:
+    """Embeddings of confirmed theme members (manual + rule assignments),
+    the raw material for theme prototypes."""
+    return [
+        dict(r)
+        for r in conn.execute(
+            """
+            SELECT t.name AS theme, v.embedding
+            FROM video_themes vt
+            JOIN themes t ON t.id = vt.theme_id
+            JOIN videos v ON v.id = vt.video_id
+            WHERE vt.source IN ('manual', 'rule') AND v.embedding IS NOT NULL
+            """
+        )
+    ]
+
+
+def videos_without_themes(
+    conn: sqlite3.Connection, with_embedding_only: bool = False, limit: int = 200
+) -> List[dict]:
+    query = """
+        SELECT v.*, w.status AS watch_status, w.rating
+        FROM videos v
+        LEFT JOIN watch_state w ON w.video_id = v.id
+        WHERE NOT EXISTS (SELECT 1 FROM video_themes vt WHERE vt.video_id = v.id)
+    """
+    if with_embedding_only:
+        query += " AND v.embedding IS NOT NULL"
+    query += " ORDER BY v.added_at DESC LIMIT ?"
+    rows = conn.execute(query, (limit,)).fetchall()
+    videos = []
+    for row in rows:
+        video = dict(row)
+        video["tags"] = json.loads(video.get("tags") or "[]")
+        video["watch_status"] = video.get("watch_status") or "unwatched"
+        videos.append(video)  # keeps the embedding blob for suggestion scoring
+    return videos
+
+
+def watched_with_embeddings(conn: sqlite3.Connection) -> List[dict]:
+    """Videos with an embedding and a non-default watch state — the
+    recommender's training signal."""
+    return [
+        dict(r)
+        for r in conn.execute(
+            """
+            SELECT v.id, v.embedding, w.status, w.rating, w.watched_at
+            FROM videos v
+            JOIN watch_state w ON w.video_id = v.id
+            WHERE v.embedding IS NOT NULL AND w.status != 'unwatched'
+            """
+        )
+    ]
+
+
+def unwatched_candidates(
+    conn: sqlite3.Connection,
+    theme: Optional[str] = None,
+    max_duration_sec: Optional[int] = None,
+) -> List[dict]:
+    query = """
+        SELECT v.*, w.status AS watch_status, w.rating
+        FROM videos v
+        LEFT JOIN watch_state w ON w.video_id = v.id
+        WHERE COALESCE(w.status, 'unwatched') = 'unwatched'
+    """
+    params: list = []
+    if theme:
+        query += """
+            AND EXISTS (
+                SELECT 1 FROM video_themes vt JOIN themes t ON t.id = vt.theme_id
+                WHERE vt.video_id = v.id AND t.name = ?
+            )
+        """
+        params.append(theme)
+    if max_duration_sec:
+        query += " AND v.duration_sec IS NOT NULL AND v.duration_sec <= ?"
+        params.append(max_duration_sec)
+    rows = conn.execute(query, params).fetchall()
+    videos = []
+    for row in rows:
+        video = dict(row)
+        video["tags"] = json.loads(video.get("tags") or "[]")
+        video["watch_status"] = video.get("watch_status") or "unwatched"
+        videos.append(video)  # embedding blob kept for scoring
+    return videos
+
+
+def theme_affinity(conn: sqlite3.Connection) -> dict:
+    """theme name -> count of watched videos in it (cold-start signal)."""
+    return {
+        r["name"]: r["n"]
+        for r in conn.execute(
+            """
+            SELECT t.name, COUNT(*) AS n
+            FROM watch_state w
+            JOIN video_themes vt ON vt.video_id = w.video_id
+            JOIN themes t ON t.id = vt.theme_id
+            WHERE w.status = 'watched'
+            GROUP BY t.name
+            """
+        )
+    }
+
+
+def themes_for_videos(conn: sqlite3.Connection, video_ids: List[str]) -> dict:
+    """video_id -> [theme names]; batch lookup for listings."""
+    if not video_ids:
+        return {}
+    placeholders = ",".join("?" * len(video_ids))
+    mapping: dict = {vid: [] for vid in video_ids}
+    for r in conn.execute(
+        f"""
+        SELECT vt.video_id, t.name FROM video_themes vt
+        JOIN themes t ON t.id = vt.theme_id
+        WHERE vt.video_id IN ({placeholders})
+        ORDER BY vt.confidence DESC
+        """,
+        video_ids,
+    ):
+        mapping[r["video_id"]].append(r["name"])
+    return mapping
+
+
 # --- watch state ----------------------------------------------------------
 
 def set_watch_state(

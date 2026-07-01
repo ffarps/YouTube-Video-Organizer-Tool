@@ -37,24 +37,33 @@ metadata for unknown videos. Rule-based themes assigned at ingest
 (`app/categorize/rules.py`: word-boundary, scored, multi-label — fixes the
 legacy substring matcher where "ai" matched "airplane").
 
-## Phase 2 — Theming (next)
-- Embedding layer: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
-  (PT/EN mix) over title+description+channel+tags, stored in `videos.embedding`.
-- Assign by cosine similarity to theme prototypes (mean of confirmed members).
-- HDBSCAN discovery pass to propose consolidating the 20 legacy categories
-  (~10 real themes; AI/AI_Development and Clothes/Watches overlap) and to name
-  new clusters (optionally LLM-labeled).
-- Review queue endpoint for low-confidence assignments; confirmations become
-  prototype members.
+## Phase 2 — Theming ✅
+Embedding layer in `app/categorize/embeddings.py` + `themes.py`:
+`paraphrase-multilingual-MiniLM-L12-v2` (PT/EN mix) over
+title+channel+tags+description, L2-normalized float32 in `videos.embedding`.
+Lazy model load — the base install works without the `[ml]` extra.
+`POST /embeddings/build` embeds new videos; `POST /themes/auto-assign` puts
+unthemed videos on the nearest theme prototype (mean of manual+rule members)
+above a 0.45 cosine threshold; the rest surface in `GET /review` with ranked
+suggestions, confirmed via `POST /videos/{id}/themes`. `POST /themes/discover`
+clusters with sklearn HDBSCAN and proposes labeled clusters (confirm with
+`POST /themes`).
 
-## Phase 3 — Recommendation
-- Profile vector = rating- and recency-weighted mean of embeddings of
-  watched/liked videos; rank unwatched by cosine.
-- MMR re-rank for diversity; filters: theme, time budget
-  (`duration_sec <= X`), recency boost.
-- Cold start: theme-affinity counts from watch_state.
-- `GET /recommendations?theme=&max_duration=&limit=`.
+## Phase 3 — Recommendation ✅
+`app/recommend/engine.py`: profile vector = rating- and recency-weighted mean
+of watched-video embeddings (rating 1 → −0.6 … 5 → +1.0, skipped −0.3,
+180-day half-life); unwatched candidates ranked by cosine blended with a
+recency boost, then MMR re-ranked (redundancy⁴ penalty so near-duplicates pay
+full price while related videos pass). Cold start without embeddings falls
+back to theme-affinity counts. `GET /recommendations?theme=&max_duration=&limit=`.
 
-## Phase 4 — Frontend
-One `static/index.html` (vanilla JS, no build step) served by FastAPI: sync
-box, theme browser, watch/rate buttons, recommendation feed, review queue.
+## Phase 4 — Frontend ✅
+`static/index.html` (vanilla JS, no build step) served at `/`: sync box,
+theme sidebar, video cards with watch/rate stars, "What should I watch?" feed
+with time-budget filter, review queue with one-click theme confirmation,
+Embed/Auto-theme maintenance buttons.
+
+## Later ideas
+- Consolidate the 20 legacy categories using discovery clusters (AI/
+  AI_Development and Clothes/Watches overlap).
+- Scheduled re-sync; export back to a YouTube playlist; LLM cluster naming.

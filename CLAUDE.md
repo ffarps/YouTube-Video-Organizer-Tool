@@ -8,8 +8,9 @@ design constraints.
 
 ```bash
 pip install -e ".[dev]"          # install (Python >= 3.11)
-pytest                           # run tests (quota-free, no network)
-uvicorn app.main:app --reload    # run the API on :8000 (docs at /docs)
+pip install -e ".[dev,ml]"       # + torch/sentence-transformers/sklearn (Phase 2/3 ML)
+pytest                           # run tests (quota-free, no network, no torch needed)
+uvicorn app.main:app --reload    # UI at :8000/, API docs at /docs
 python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy import
 ```
 
@@ -28,9 +29,20 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   ONLY reachable this way (Data API blocks WL), needs
   `YTDLP_COOKIES_BROWSER` set.
 - `app/categorize/rules.py` — word-boundary, scored, multi-label keyword
-  themes applied at ingest. Embedding layer comes in Phase 2.
+  themes applied at ingest (URLs stripped from text first — "watch?v=" used
+  to match the Watches theme).
+- `app/categorize/embeddings.py` — lazy sentence-transformers load
+  (multilingual MiniLM); vectors are L2-normalized float32 blobs, so cosine
+  = dot product. Everything else runs on plain numpy without the [ml] extra.
+- `app/categorize/themes.py` — prototype-based auto-assign (threshold 0.45),
+  review queue, HDBSCAN discovery.
+- `app/recommend/engine.py` — profile vector from watch_state (ratings map
+  to −0.6…+1.0 weights, 180-day half-life), cosine + recency, MMR with a
+  redundancy⁴ penalty targeting near-duplicates.
 - `app/api/routes.py` — all endpoints; DB connection lives on
   `app.state.db` (set in the lifespan in `app/main.py`).
+- `static/index.html` — the whole frontend, vanilla JS, served at `/`.
+  No build step; talks to the API with fetch.
 
 ## Conventions
 

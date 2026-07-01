@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.3,<3",
     "yt-dlp>=2025.1.1",
     "google-api-python-client>=2.130,<3",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -17,9 +18,15 @@ dev = [
     "pytest>=8,<9",
     "httpx>=0.27,<1",
 ]
+# Embedding-based theming and clustering (Phase 2). Without this extra the
+# app still works: rule themes, manual themes, and cold-start recommendations.
+ml = [
+    "sentence-transformers>=3.0",
+    "scikit-learn>=1.5",
+]
 
 [tool.setuptools]
-packages = ["app", "app.ingest", "app.categorize", "app.api"]
+packages = ["app", "app.ingest", "app.categorize", "app.recommend", "app.api"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

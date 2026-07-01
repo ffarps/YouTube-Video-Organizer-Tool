@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Video Organizer</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e2230; --text: #e6e9ef;
+    --muted: #8b93a7; --accent: #e33d3d; --accent2: #3d7ee3; --ok: #2fbf71;
+    --border: #262b38; --star: #f5b942;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; padding: .8rem 1.2rem; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 1.05rem; margin: 0; white-space: nowrap; }
+  header h1 span { color: var(--accent); }
+  #syncForm { display: flex; flex: 1; min-width: 260px; gap: .5rem; }
+  #syncUrl { flex: 1; padding: .5rem .7rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  button { border: 1px solid var(--border); background: var(--panel2); color: var(--text); padding: .5rem .8rem; border-radius: 8px; cursor: pointer; font-size: .85rem; }
+  button:hover { border-color: var(--accent2); }
+  button.primary { background: var(--accent); border-color: var(--accent); }
+  button.primary:hover { filter: brightness(1.1); }
+  main { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 57px); }
+  nav { background: var(--panel); border-right: 1px solid var(--border); padding: .8rem; }
+  nav h2 { font-size: .75rem; text-transform: uppercase; color: var(--muted); margin: .8rem .3rem .4rem; }
+  .theme-item { display: flex; justify-content: space-between; padding: .38rem .55rem; border-radius: 7px; cursor: pointer; font-size: .88rem; }
+  .theme-item:hover, .theme-item.active { background: var(--panel2); }
+  .theme-item .n { color: var(--muted); font-size: .78rem; }
+  #content { padding: 1rem 1.3rem; }
+  .tabs { display: flex; gap: .4rem; margin-bottom: 1rem; }
+  .tabs button.active { background: var(--accent2); border-color: var(--accent2); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1rem; color: var(--muted); font-size: .85rem; }
+  .toolbar input[type=number], .toolbar select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: .35rem .5rem; width: 90px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: .9rem; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .thumbwrap { position: relative; aspect-ratio: 16/9; background: #000; }
+  .thumbwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.8); padding: 1px 6px; border-radius: 5px; font-size: .75rem; }
+  .score { position: absolute; left: 6px; top: 6px; background: var(--accent2); padding: 1px 7px; border-radius: 5px; font-size: .72rem; }
+  .watchedmark { position: absolute; left: 6px; bottom: 6px; background: var(--ok); color: #04170c; padding: 1px 7px; border-radius: 5px; font-size: .72rem; font-weight: 600; }
+  .card .body { padding: .6rem .7rem .7rem; display: flex; flex-direction: column; gap: .4rem; flex: 1; }
+  .card a.title { color: var(--text); text-decoration: none; font-size: .9rem; font-weight: 600; line-height: 1.25; }
+  .card a.title:hover { color: var(--accent2); }
+  .card .meta { color: var(--muted); font-size: .78rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .chip { background: var(--panel2); border: 1px solid var(--border); font-size: .7rem; padding: 1px 8px; border-radius: 999px; color: var(--muted); }
+  .chip.suggest { cursor: pointer; color: var(--text); border-color: var(--accent2); }
+  .chip.suggest:hover { background: var(--accent2); }
+  .actions { margin-top: auto; display: flex; justify-content: space-between; align-items: center; }
+  .stars span { cursor: pointer; color: var(--muted); font-size: 1rem; }
+  .stars span.on { color: var(--star); }
+  .watchbtn { font-size: .75rem; padding: .3rem .6rem; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--accent2); border-radius: 10px; padding: .6rem 1rem; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 80vw; }
+  #toast.show { opacity: 1; }
+  .empty { color: var(--muted); padding: 2rem; text-align: center; }
+  @media (max-width: 720px) { main { grid-template-columns: 1fr; } nav { border-right: 0; border-bottom: 1px solid var(--border); } }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>&#9654;</span> Video Organizer</h1>
+  <form id="syncForm">
+    <input id="syncUrl" placeholder="Paste a YouTube playlist / channel / video URL and press Enter" required>
+    <button class="primary" type="submit">Sync</button>
+  </form>
+  <button id="btnEmbed" title="Compute embeddings for new videos (needs the [ml] extra)">Embed</button>
+  <button id="btnAssign" title="Auto-assign themes to unthemed videos by embedding similarity">Auto-theme</button>
+</header>
+
+<main>
+  <nav>
+    <h2>Themes</h2>
+    <div id="themeList"></div>
+  </nav>
+  <section id="content">
+    <div class="tabs">
+      <button id="tabBrowse" class="active">Browse</button>
+      <button id="tabRecommend">What should I watch?</button>
+      <button id="tabReview">Review queue</button>
+    </div>
+
+    <div id="viewBrowse">
+      <div class="toolbar">
+        <label><input type="checkbox" id="unwatchedOnly" checked> unwatched only</label>
+        <span id="browseTitle"></span>
+      </div>
+      <div id="browseGrid" class="grid"></div>
+    </div>
+
+    <div id="viewRecommend" hidden>
+      <div class="toolbar">
+        <label>theme <select id="recTheme"><option value="">any</option></select></label>
+        <label>I have <input type="number" id="recMinutes" min="1" placeholder="min"> minutes</label>
+        <label>count <input type="number" id="recLimit" value="12" min="1" max="50"></label>
+        <button class="primary" id="btnRecommend">Recommend</button>
+        <span id="recMode"></span>
+      </div>
+      <div id="recGrid" class="grid"></div>
+    </div>
+
+    <div id="viewReview" hidden>
+      <div class="toolbar"><span>Videos with no theme yet — click a suggestion to confirm, or type your own.</span></div>
+      <div id="reviewGrid" class="grid"></div>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let themes = [], activeTheme = null;
+
+function toast(msg, ms = 3200) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+async function api(path, opts = {}) {
+  if (opts.body) opts.headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+
+function fmtDur(s) {
+  if (s == null) return "";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+           : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function card(v, { score = null, suggestions = null } = {}) {
+  const el = document.createElement("div");
+  el.className = "card";
+  const watched = v.watch_status === "watched";
+  const stars = [1,2,3,4,5].map(n =>
+    `<span data-star="${n}" class="${v.rating >= n ? "on" : ""}">&#9733;</span>`).join("");
+  el.innerHTML = `
+    <div class="thumbwrap">
+      ${v.thumbnail_url ? `<img loading="lazy" src="${v.thumbnail_url}" alt="">` : ""}
+      ${v.duration_sec != null ? `<span class="dur">${fmtDur(v.duration_sec)}</span>` : ""}
+      ${score != null ? `<span class="score">match ${(score * 100).toFixed(0)}%</span>` : ""}
+      ${watched ? `<span class="watchedmark">watched</span>` : ""}
+    </div>
+    <div class="body">
+      <a class="title" target="_blank" rel="noopener"
+         href="https://www.youtube.com/watch?v=${v.id}">${v.title}</a>
+      <div class="meta">${v.channel_title || ""}</div>
+      <div class="chips">
+        ${(v.themes || []).map(t => `<span class="chip">${t}</span>`).join("")}
+        ${(suggestions || []).map(s =>
+          `<span class="chip suggest" data-theme="${s.theme}" title="similarity ${s.score}">+ ${s.theme}</span>`).join("")}
+        ${suggestions ? `<span class="chip suggest" data-theme="__custom__">+ custom…</span>` : ""}
+      </div>
+      <div class="actions">
+        <div class="stars">${stars}</div>
+        <button class="watchbtn">${watched ? "unwatch" : "mark watched"}</button>
+      </div>
+    </div>`;
+
+  el.querySelector(".watchbtn").onclick = async () => {
+    await api(`/videos/${v.id}/watch-state`, { method: "PATCH",
+      body: JSON.stringify({ status: watched ? "unwatched" : "watched" }) });
+    refreshCurrent();
+  };
+  el.querySelectorAll(".stars span").forEach(s => s.onclick = async () => {
+    await api(`/videos/${v.id}/watch-state`, { method: "PATCH",
+      body: JSON.stringify({ rating: +s.dataset.star, status: "watched" }) });
+    refreshCurrent();
+  });
+  el.querySelectorAll(".chip.suggest").forEach(c => c.onclick = async () => {
+    let name = c.dataset.theme;
+    if (name === "__custom__") { name = prompt("Theme name:"); if (!name) return; }
+    await api(`/videos/${v.id}/themes`, { method: "POST", body: JSON.stringify({ name }) });
+    toast(`Themed as ${name}`);
+    loadThemes(); loadReview();
+  });
+  return el;
+}
+
+function renderGrid(target, videos, extras = (v) => ({})) {
+  target.replaceChildren();
+  if (!videos.length) {
+    target.innerHTML = `<div class="empty">Nothing here. Sync a playlist to get started.</div>`;
+    return;
+  }
+  videos.forEach(v => target.appendChild(card(v, extras(v))));
+}
+
+async function loadThemes() {
+  themes = (await api("/themes")).themes;
+  const list = $("themeList");
+  list.replaceChildren();
+  themes.forEach(t => {
+    const el = document.createElement("div");
+    el.className = "theme-item" + (t.name === activeTheme ? " active" : "");
+    el.innerHTML = `<span>${t.name}</span><span class="n">${t.video_count}</span>`;
+    el.onclick = () => { activeTheme = t.name; showTab("Browse"); loadBrowse(); loadThemes(); };
+    list.appendChild(el);
+  });
+  const sel = $("recTheme");
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">any</option>` +
+    themes.map(t => `<option>${t.name}</option>`).join("");
+  sel.value = cur;
+}
+
+async function loadBrowse() {
+  if (!activeTheme) {
+    if (themes.length) activeTheme = themes[0].name;
+    else { $("browseGrid").innerHTML = `<div class="empty">No themes yet — sync something.</div>`; return; }
+  }
+  $("browseTitle").textContent = activeTheme;
+  const unwatched = $("unwatchedOnly").checked ? "&watched=false" : "";
+  const data = await api(`/themes/${encodeURIComponent(activeTheme)}/videos?limit=200${unwatched}`);
+  const withThemes = data.videos.map(v => ({ ...v, themes: v.themes || [activeTheme] }));
+  renderGrid($("browseGrid"), withThemes);
+}
+
+async function loadRecommendations() {
+  const params = new URLSearchParams({ limit: $("recLimit").value || 12 });
+  if ($("recTheme").value) params.set("theme", $("recTheme").value);
+  if ($("recMinutes").value) params.set("max_duration", $("recMinutes").value * 60);
+  const data = await api(`/recommendations?${params}`);
+  $("recMode").textContent = data.mode === "profile"
+    ? "ranked by your taste profile" : "cold start: ranked by theme affinity — rate some videos!";
+  renderGrid($("recGrid"), data.recommendations, v => ({ score: v.score }));
+}
+
+async function loadReview() {
+  const data = await api("/review?limit=60");
+  const grid = $("reviewGrid");
+  grid.replaceChildren();
+  if (!data.queue.length) {
+    grid.innerHTML = `<div class="empty">Review queue is empty — every video has a theme. 🎉</div>`;
+    return;
+  }
+  data.queue.forEach(item =>
+    grid.appendChild(card(item.video, { suggestions: item.suggestions })));
+}
+
+const views = { Browse: loadBrowse, Recommend: loadRecommendations, Review: loadReview };
+let currentTab = "Browse";
+function showTab(name) {
+  currentTab = name;
+  for (const t of ["Browse", "Recommend", "Review"]) {
+    $("view" + t).hidden = t !== name;
+    $("tab" + t).classList.toggle("active", t === name);
+  }
+}
+function refreshCurrent() { loadThemes(); views[currentTab](); }
+
+$("tabBrowse").onclick = () => { showTab("Browse"); loadBrowse(); };
+$("tabRecommend").onclick = () => { showTab("Recommend"); loadRecommendations(); };
+$("tabReview").onclick = () => { showTab("Review"); loadReview(); };
+$("unwatchedOnly").onchange = loadBrowse;
+$("btnRecommend").onclick = loadRecommendations;
+
+$("syncForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const url = $("syncUrl").value.trim();
+  if (!url) return;
+  toast("Syncing… this can take a moment", 60000);
+  try {
+    const r = await api("/sync", { method: "POST", body: JSON.stringify({ url }) });
+    toast(r.kind === "video"
+      ? `Added: ${r.video?.title || "1 video"}`
+      : `${r.title || r.playlist_id}: ${r.added} new, ${r.already_known} already known`);
+    $("syncUrl").value = "";
+    refreshCurrent();
+  } catch (err) { toast("Sync failed: " + err.message, 6000); }
+};
+
+$("btnEmbed").onclick = async () => {
+  toast("Computing embeddings… (first run downloads the model)", 120000);
+  try {
+    const r = await api("/embeddings/build", { method: "POST" });
+    toast(`Embedded ${r.embedded_now} videos (${r.remaining} remaining)`);
+  } catch (err) { toast(err.message, 6000); }
+};
+
+$("btnAssign").onclick = async () => {
+  try {
+    const r = await api("/themes/auto-assign", { method: "POST", body: JSON.stringify({}) });
+    toast(`Auto-themed ${r.assigned} videos, ${r.needs_review} need review`);
+    refreshCurrent();
+  } catch (err) { toast(err.message, 6000); }
+};
+
+loadThemes().then(loadBrowse);
+</script>
+</body>
+</html>

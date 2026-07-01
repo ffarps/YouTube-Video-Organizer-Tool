@@ -37,3 +37,21 @@ class AddVideoRequest(BaseModel):
 class WatchStateUpdate(BaseModel):
     status: Optional[WatchStatus] = None
     rating: Optional[int] = Field(default=None, ge=1, le=5)
+
+
+class ThemeAssignRequest(BaseModel):
+    name: str
+
+
+class ThemeCreateRequest(BaseModel):
+    name: str
+    video_ids: List[str] = []
+
+
+class AutoAssignRequest(BaseModel):
+    threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+
+
+class DiscoverRequest(BaseModel):
+    min_cluster_size: int = Field(default=5, ge=2)
+    scope: Literal["unthemed", "all"] = "unthemed"
