@@ -11,6 +11,7 @@ pip install -e ".[dev]"          # install (Python >= 3.11)
 pip install -e ".[dev,ml]"       # + torch/sentence-transformers/sklearn (Phase 2/3 ML)
 pytest                           # run tests (quota-free, no network, no torch needed)
 uvicorn app.main:app --reload    # UI at :8000/, API docs at /docs
+start.bat                        # Windows one-click: installs deps if missing, opens browser
 python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy import
 ```
 
