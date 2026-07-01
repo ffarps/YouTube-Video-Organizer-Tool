@@ -4,11 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouTube Video Organizer</title>
+<script>document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";</script>
 <style>
   :root {
     --bg: #0f1115; --panel: #171a21; --panel2: #1e2230; --text: #e6e9ef;
     --muted: #8b93a7; --accent: #e33d3d; --accent2: #3d7ee3; --ok: #2fbf71;
     --border: #262b38; --star: #f5b942;
+  }
+  html[data-theme="light"] {
+    --bg: #f5f6f8; --panel: #ffffff; --panel2: #eceef2; --text: #1a1d24;
+    --muted: #5c6474; --accent: #c62828; --accent2: #2f6fd0; --ok: #1e8e5a;
+    --border: #d8dce4; --star: #d99a00;
+  }
+  html[data-theme="mono"] {
+    --bg: #ffffff; --panel: #ffffff; --panel2: #f2f2f2; --text: #111111;
+    --muted: #666666; --accent: #111111; --accent2: #111111; --ok: #111111;
+    --border: #cccccc; --star: #111111;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
@@ -19,7 +30,8 @@
   #syncUrl { flex: 1; padding: .5rem .7rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
   button { border: 1px solid var(--border); background: var(--panel2); color: var(--text); padding: .5rem .8rem; border-radius: 8px; cursor: pointer; font-size: .85rem; }
   button:hover { border-color: var(--accent2); }
-  button.primary { background: var(--accent); border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem; font-size: .85rem; cursor: pointer; }
   button.primary:hover { filter: brightness(1.1); }
   main { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 57px); }
   nav { background: var(--panel); border-right: 1px solid var(--border); padding: .8rem; }
@@ -29,7 +41,7 @@
   .theme-item .n { color: var(--muted); font-size: .78rem; }
   #content { padding: 1rem 1.3rem; }
   .tabs { display: flex; gap: .4rem; margin-bottom: 1rem; }
-  .tabs button.active { background: var(--accent2); border-color: var(--accent2); }
+  .tabs button.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
   .toolbar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1rem; color: var(--muted); font-size: .85rem; }
   .toolbar input[type=number], .toolbar select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: .35rem .5rem; width: 90px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: .9rem; }
@@ -37,8 +49,8 @@
   .thumbwrap { position: relative; aspect-ratio: 16/9; background: #000; }
   .thumbwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.8); padding: 1px 6px; border-radius: 5px; font-size: .75rem; }
-  .score { position: absolute; left: 6px; top: 6px; background: var(--accent2); padding: 1px 7px; border-radius: 5px; font-size: .72rem; }
-  .watchedmark { position: absolute; left: 6px; bottom: 6px; background: var(--ok); color: #04170c; padding: 1px 7px; border-radius: 5px; font-size: .72rem; font-weight: 600; }
+  .score { position: absolute; left: 6px; top: 6px; background: var(--accent2); color: #fff; padding: 1px 7px; border-radius: 5px; font-size: .72rem; }
+  .watchedmark { position: absolute; left: 6px; bottom: 6px; background: var(--ok); color: var(--bg); padding: 1px 7px; border-radius: 5px; font-size: .72rem; font-weight: 600; }
   .card .body { padding: .6rem .7rem .7rem; display: flex; flex-direction: column; gap: .4rem; flex: 1; }
   .card a.title { color: var(--text); text-decoration: none; font-size: .9rem; font-weight: 600; line-height: 1.25; }
   .card a.title:hover { color: var(--accent2); }
@@ -46,7 +58,7 @@
   .chips { display: flex; flex-wrap: wrap; gap: .3rem; }
   .chip { background: var(--panel2); border: 1px solid var(--border); font-size: .7rem; padding: 1px 8px; border-radius: 999px; color: var(--muted); }
   .chip.suggest { cursor: pointer; color: var(--text); border-color: var(--accent2); }
-  .chip.suggest:hover { background: var(--accent2); }
+  .chip.suggest:hover { background: var(--accent2); color: #fff; }
   .actions { margin-top: auto; display: flex; justify-content: space-between; align-items: center; }
   .stars span { cursor: pointer; color: var(--muted); font-size: 1rem; }
   .stars span.on { color: var(--star); }
@@ -66,6 +78,11 @@
   </form>
   <button id="btnEmbed" title="Compute embeddings for new videos (needs the [ml] extra)">Embed</button>
   <button id="btnAssign" title="Auto-assign themes to unthemed videos by embedding similarity">Auto-theme</button>
+  <select id="themePick" title="Color theme">
+    <option value="dark">Dark</option>
+    <option value="light">Light</option>
+    <option value="mono">Black &amp; white</option>
+  </select>
 </header>
 
 <main>
@@ -110,6 +127,12 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let themes = [], activeTheme = null;
+
+$("themePick").value = document.documentElement.dataset.theme;
+$("themePick").onchange = (e) => {
+  document.documentElement.dataset.theme = e.target.value;
+  localStorage.setItem("theme", e.target.value);
+};
 
 function toast(msg, ms = 3200) {
   const t = $("toast");
