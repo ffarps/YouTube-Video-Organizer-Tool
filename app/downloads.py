@@ -7,6 +7,7 @@ error) lives in the `downloads` table; only the live byte counter is kept in
 memory, because writing progress to SQLite several times a second would be a
 lot of churn for a number nobody needs once the file has landed.
 """
+import logging
 import sqlite3
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from typing import Dict, Optional
 
 from app import db
 from app.ingest import download as ytdl
+
+log = logging.getLogger("watchlog.downloads")
 
 # video_id -> the most recent progress event for downloads running right now.
 _active: Dict[str, dict] = {}
@@ -161,6 +164,12 @@ def start(
 
     def run() -> None:
         try:
+            log.info(
+                "download start %s (max_height=%s audio_only=%s)",
+                video_id,
+                max_height,
+                audio_only,
+            )
             db.mark_download_running(conn, video_id)
             result = ytdl.download_video(
                 video_id,
@@ -182,8 +191,16 @@ def start(
             # the old file behind unless it is removed here.
             if previous and previous["filename"] != result["filename"]:
                 _unlink(media_dir, previous["filename"])
+            log.info(
+                "download done %s -> %s (%d bytes)",
+                video_id,
+                result["filename"],
+                result["size_bytes"],
+            )
         except Exception as e:  # any failure must clear the spinner
             message = f"{type(e).__name__}: {e}"
+            # The row keeps one line for the UI; the traceback only exists here.
+            log.exception("download failed %s: %s", video_id, message)
             if previous:
                 db.restore_download(conn, video_id, previous, message)
             else:

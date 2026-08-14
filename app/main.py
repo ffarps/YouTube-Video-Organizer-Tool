@@ -1,34 +1,50 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import db, downloads
+from app import db, downloads, logs
 from app.api.routes import router
 from app.config import get_settings
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+log = logging.getLogger("watchlog")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.media_dir().mkdir(parents=True, exist_ok=True)
+    logs.setup(settings.log_dir())
+    log.info("starting: db=%s media=%s", settings.database_path, settings.media_dir())
     conn = db.connect(settings.database_path)
     db.init_db(conn)
     # Downloads can't survive a restart, so anything still marked in-flight is
     # stale and would otherwise spin forever in the UI.
-    downloads.reset_stale(conn)
+    stale = downloads.reset_stale(conn)
+    if stale:
+        log.warning("marked %d interrupted download(s) as failed", stale)
     app.state.db = conn
     yield
+    log.info("shutting down")
     conn.close()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Watchlog", version="2.1", lifespan=lifespan)
     app.include_router(router)
+
+    # Which request died matters as much as the traceback: without the path
+    # and method, a 500 in the log is a puzzle. Re-raised so the response and
+    # uvicorn's own handling are unchanged.
+    @app.exception_handler(Exception)
+    async def log_unhandled(request: Request, exc: Exception):
+        log.exception("unhandled error on %s %s", request.method, request.url.path)
+        raise exc
 
     # Serve downloaded files through StaticFiles rather than a FileResponse
     # endpoint: it answers HTTP Range requests, which is what lets you scrub

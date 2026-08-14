@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # Where on-demand downloads are written, one file per video id.
     media_path: str = "media"
 
+    # Where the rotating log file goes. Kept out of the media folder so a
+    # crash report is never mistaken for something you downloaded.
+    log_path: str = "logs"
+
     # Default ceiling for downloads: 2160 = 4K, 1440 = 2K, then 1080/720/...
     # Anything above 360 needs ffmpeg on PATH, because YouTube only serves
     # taller streams with the audio split into a separate file.
@@ -33,6 +37,10 @@ class Settings(BaseSettings):
         """Absolute media folder. Resolved so the static mount and the
         delete path agree on what counts as 'inside' it."""
         return Path(self.media_path).resolve()
+
+    def log_dir(self) -> Path:
+        """Absolute log folder."""
+        return Path(self.log_path).resolve()
 
 
 @lru_cache

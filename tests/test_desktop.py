@@ -64,22 +64,21 @@ def test_window_geometry_falls_back_without_screen_info():
     assert desktop._window_geometry(_FakeWebview()) == (1360, 900, None, None)
 
 
-def test_redirect_streams_survives_a_missing_stdout(tmp_path, monkeypatch):
-    """pythonw.exe hands us sys.stdout = None; the first log line must not
-    take the process down with it."""
-    log = tmp_path / "desktop.log"
-    monkeypatch.setattr(desktop, "LOG_PATH", log)
+def test_start_logging_survives_a_missing_stdout(tmp_path, monkeypatch, logging_sandbox):
+    """pythonw.exe hands us sys.stdout = None; the first print anywhere in the
+    process must not take it down."""
+    monkeypatch.setenv("LOG_PATH", str(tmp_path / "logs"))
+    get_settings.cache_clear()
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)
 
-    desktop._redirect_streams()
+    path = desktop._start_logging()
 
-    stream = sys.stdout
-    assert stream is not None
+    assert sys.stdout is not None
     print("hello from pythonw")
-    stream.flush()
-    assert "hello from pythonw" in log.read_text(encoding="utf-8")
-    stream.close()
+    sys.stdout.flush()
+    assert "hello from pythonw" in path.read_text(encoding="utf-8")
+    get_settings.cache_clear()
 
 
 def test_wait_until_serving_reports_a_dead_server_thread():

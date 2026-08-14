@@ -78,8 +78,8 @@ around the same page.
 - Links out to YouTube open in your normal browser, where you are signed in.
 - Set `WATCHLOG_PORT` to pin the port. Otherwise it uses 8000, or the next free
   port if something else already has it.
-- There is no console to print to, so anything that would have been logged goes
-  to `watchlog-desktop.log` next to the database.
+- There is no console to print to, so everything goes to a log file instead.
+  See [When something goes wrong](#when-something-goes-wrong).
 
 [pywebview]: https://pywebview.flowrl.com/
 
@@ -218,6 +218,23 @@ One video at a time is deliberate. Bulk-archiving a library is against
 YouTube's Terms of Service, and the disk arithmetic is unfriendly anyway: 1080p
 runs roughly 100-250 MB per video, so a 500-video backlog is about 75 GB.
 Saving a few things for a flight or a commute is the case this is built for.
+
+## When something goes wrong
+
+Everything the app does is written to `logs/watchlog.log` (set `LOG_PATH` to
+put it elsewhere). It rotates at 2 MB, keeps five files, and appends across
+runs rather than starting fresh, because the first thing anyone does after a
+crash is open the app again.
+
+It records startup and shutdown, every download with its result, any request
+that ends in a 500 along with the path that caused it, and the full traceback
+of any exception — including ones thrown on background threads, which would
+otherwise disappear without a trace.
+
+A hard crash of the window itself, in the WebView or its .NET bridge, kills the
+process before Python can log anything. Those write a native stack trace to
+`logs/watchlog-crash.log` instead. If that file exists, something crashed at a
+level below the app.
 
 ## API
 

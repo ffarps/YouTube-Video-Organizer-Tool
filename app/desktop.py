@@ -7,9 +7,9 @@ stops the server and ends the process, so there is never a stray server left
 behind for the user to hunt down.
 
 Started with `pythonw.exe` (see `Watchlog.vbs` and `start.bat`) there is no
-console at all, and therefore no stdout: `_redirect_streams` has to point the
-streams at a log file before anything writes to them, and failures have to be
-reported with a message box instead of a traceback nobody would ever see.
+console at all, and therefore no stdout: logging has to be running before
+anything writes a line, and failures have to be reported with a message box
+instead of a traceback nobody would ever see. See `app/logs.py`.
 
 The window itself is a WebView2 surface via pywebview. Without that package
 installed we fall back to a Chromium browser in `--app` mode, which is the same
@@ -17,6 +17,7 @@ chromeless window by other means; both paths block until the user closes it.
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import socket
@@ -27,31 +28,33 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
+from app import logs
+from app.config import get_settings
+
 ROOT = Path(__file__).resolve().parent.parent
-LOG_PATH = ROOT / "watchlog-desktop.log"
 DEFAULT_PORT = 8000
 TITLE = "My Watch Log"
+
+log = logging.getLogger("watchlog.desktop")
 # Matches --bg of the app's default (dark) theme, so opening the window doesn't
 # flash white before the page paints.
 BACKGROUND = "#0f1115"
 
 
-def _redirect_streams() -> None:
-    """Give the process somewhere to print.
+def _start_logging() -> Path:
+    """Get logging running before anything else can fail.
 
-    `pythonw.exe` leaves `sys.stdout` and `sys.stderr` as None, and the first
-    line uvicorn logs would take the whole app down with an AttributeError.
+    This is the first thing `run` does, because everything after it — the
+    server thread, the window, the crash handler — is only debuggable if its
+    output has somewhere to go.
     """
-    if sys.stdout is not None and sys.stderr is not None:
-        return
-    try:
-        stream = open(LOG_PATH, "w", encoding="utf-8", buffering=1)
-    except OSError:
-        stream = open(os.devnull, "w", encoding="utf-8")
-    if sys.stdout is None:
-        sys.stdout = stream
-    if sys.stderr is None:
-        sys.stderr = stream
+    log_dir = get_settings().log_dir()
+    path = logs.setup(log_dir)
+    # pythonw.exe leaves sys.stdout and sys.stderr as None, and the first
+    # print anywhere in the process would take the app down with an
+    # AttributeError before a single line got written.
+    logs.capture_std_streams()
+    return path
 
 
 def _data_dir(name: str) -> Path:
@@ -96,6 +99,11 @@ def _start_server(port: int):
         port=port,
         log_level="info",
         access_log=False,
+        # log_config=None: don't let uvicorn install its own console handlers.
+        # Its loggers then propagate to the root logger, so "Exception in ASGI
+        # application" ends up in the same file as everything else instead of
+        # on a stdout that doesn't exist.
+        log_config=None,
     )
     server = uvicorn.Server(config)
     # Daemon: if the GUI dies badly, the process still exits.
@@ -250,7 +258,7 @@ def _open_browser_window(url: str, port: int) -> bool:
 
 def _error_box(message: str) -> None:
     """Report a startup failure. With no console, this is the only channel."""
-    print(message, file=sys.stderr)
+    log.error(message.replace("\n", " "))
     if sys.platform == "win32":
         import ctypes
 
@@ -258,17 +266,19 @@ def _error_box(message: str) -> None:
 
 
 def run(port: Optional[int] = None) -> int:
-    _redirect_streams()
+    log_path = _start_logging()
     if port is None:
         env_port = os.environ.get("WATCHLOG_PORT")
         port = int(env_port) if env_port else _pick_port()
 
+    log.info("desktop start: port=%s python=%s", port, sys.executable)
     server, thread = _start_server(port)
     url = f"http://127.0.0.1:{port}/"
     try:
         _wait_until_serving(server, thread)
     except Exception as exc:
-        _error_box(f"Watchlog could not start.\n\n{exc}\n\nLog: {LOG_PATH}")
+        log.exception("server did not come up")
+        _error_box(f"Watchlog could not start.\n\n{exc}\n\nLog: {log_path}")
         return 1
 
     try:
@@ -277,11 +287,16 @@ def run(port: Optional[int] = None) -> int:
                 "Watchlog is running but there is no window to show it in.\n\n"
                 'Install the desktop dependency:  pip install -e ".[desktop]"\n'
                 f"or open {url} in your browser (start.bat browser).\n\n"
-                f"Log: {LOG_PATH}"
+                f"Log: {log_path}"
             )
             return 1
+    except Exception as exc:  # the window itself failed, not the app
+        log.exception("window backend crashed")
+        _error_box(f"The Watchlog window closed unexpectedly.\n\n{exc}\n\nLog: {log_path}")
+        return 1
     finally:
         # Window closed (or never opened): take the server down with it.
+        log.info("window closed, stopping server")
         server.should_exit = True
         thread.join(timeout=5)
     return 0

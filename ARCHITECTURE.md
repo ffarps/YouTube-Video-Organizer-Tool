@@ -106,6 +106,18 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   seeking work in a local `<video>`. Deleting a video unlinks its media
   *before* the row, since `ON DELETE CASCADE` takes the row and leaves the
   file orphaned.
+- `app/logs.py` — one rotating file (`LOG_PATH`, default `logs/`) that
+  everything writes to, set up from the lifespan so both entry points get it.
+  Opened in **append** mode: truncating at startup empties the log exactly
+  when it's needed, since the first move after a crash is relaunching. Three
+  things that normal logging misses are hooked here — `sys.excepthook`,
+  `threading.excepthook` (a download thread's traceback would otherwise go
+  nowhere) and `faulthandler` writing to its own always-open file (a WebView2
+  or pythonnet segfault kills the interpreter before any Python handler
+  runs). `capture_std_streams` swaps `sys.stdout`/`stderr` for line-buffered
+  log adapters when they are None under `pythonw`. Uvicorn is started with
+  `log_config=None` so its loggers propagate here instead of onto a stdout
+  that doesn't exist.
 - `app/desktop.py` — the desktop shell, and the only entry point that owns a
   window. Uvicorn goes on a daemon thread (that's supported: uvicorn skips
   its signal handlers off the main thread) and the GUI keeps the main
