@@ -1,44 +1,48 @@
 # Watchlog
 
-A local-first tool for taming your YouTube backlog. Sync playlists and
-channels into a database on your machine, get videos auto-organized into
-themes, track what you've watched, and ask *"what should I watch?"* — it
-recommends from your own library based on what you liked.
+Watchlog keeps a YouTube backlog in a SQLite file on your own machine. It pulls
+in playlists, channels and single videos, sorts them into themes, tracks what
+you have watched and how you rated it, suggests what to watch next out of your
+own library, and can save individual videos to disk for offline viewing.
 
-Everything runs locally: one SQLite file, an optional on-device ML model,
-no accounts, no cloud. The only thing it talks to is YouTube.
+On Windows it opens as a desktop window. On any OS it runs as a local web app
+at `http://localhost:8000`. There is no account and no server other than the
+one on your machine; the only thing it talks to is YouTube.
 
-## Features
+The repository is still named YouTube-Video-Organizer-Tool. The app calls
+itself Watchlog, and the window title is "My Watch Log".
 
-- **One-box sync** — paste any playlist, channel, or video URL. Re-syncing
-  never duplicates; new videos just appear. Your **Watch Later** playlist
-  works too (via browser cookies — the official API can't touch it).
-- **Auto-theming** — a transparent keyword layer plus a multilingual
-  embedding model (PT/EN friendly) sort videos into themes. Videos the
-  model isn't sure about land in a **review queue** where one click fixes them.
-- **Watch tracking** — mark watched, then thumbs up or down. No star scale to
-  agonize over: a video you watched without voting already counts as "it was
-  okay", so you only press a button when you actually have an opinion.
-- **Recommendations** — ranked by similarity to what you thumbed up,
-  de-duplicated for variety, filterable by theme and by *"I have N minutes"*.
-- **Theme discovery** — cluster your library to find themes you didn't know
-  you had.
-- **Offline copies** — save any single video to your machine (4K down to
-  360p, or audio only) and it plays from disk in the built-in player, no
-  connection needed. One video at a time, on purpose — see
-  [Watching offline](#watching-offline).
-- **Simple UI** — a single page, in its own desktop window or at
-  `http://localhost:8000`, with Dark, Light, and Black & white color themes.
+## What it does not do
 
-## Quick start (Windows)
+- It is not a bulk downloader. Offline copies are one video per request, by
+  design. There is no "download everything" button and there will not be one.
+- It cannot see your YouTube watch history, subscriptions or likes. The API
+  does not expose them, so everything it knows about your habits is what you
+  marked here.
+- It is single-user and single-machine. No login, no sync between devices, no
+  sharing.
+- Recommendations are computed locally from your own library and your own
+  votes. Nothing about your viewing leaves the machine.
 
-Double-click **`start.bat`**. On first run it installs the dependencies; after
-that the app opens in its own window — no browser tab, no console, no server
-to remember to stop. Closing the window shuts everything down.
+## Requirements
 
-Run **`create-desktop-shortcut.bat`** once to put a *My Watch Log* icon on
-your Desktop, and use that from then on. (It points at `Watchlog.vbs`, the
-launcher that starts the app without even a flicker of a console window.)
+- Python 3.11 or newer.
+- Windows 10/11 for the one-click launcher and the desktop window. The web-app
+  mode works anywhere Python does.
+- ffmpeg, only if you want offline copies above 360p. See [Install ffmpeg
+  first](#install-ffmpeg-first).
+- A YouTube Data API key is optional. Without one, everything still works
+  through yt-dlp, just slower.
+
+## Install and run (Windows)
+
+Double-click `start.bat`. The first run installs dependencies; after that the
+app opens in its own window, with no browser tab and no console. Closing the
+window stops the server.
+
+Run `create-desktop-shortcut.bat` once to put a "My Watch Log" icon on your
+Desktop and use that from then on. It launches `Watchlog.vbs`, which starts the
+app without showing a console at all.
 
 <details>
 <summary>Manual setup (any OS)</summary>
@@ -47,66 +51,116 @@ launcher that starts the app without even a flicker of a console window.)
 python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev,desktop]"
-python -m app.desktop        # app in its own window
+python -m app.desktop
 ```
 
-Or run it as a plain web app and use your browser:
+To run it as a plain web app instead:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Then open http://localhost:8000. On Windows, `start.bat browser` does the
-same thing (server in a console, auto-reloading) if you'd rather work that way.
+Then open http://localhost:8000. On Windows, `start.bat browser` does the same
+thing (server in a console, browser tab, auto-reload on code changes).
 </details>
 
 ### The window
 
-`python -m app.desktop` starts the server on localhost and puts it in a
-desktop window. It's the same app either way — the window is just a shell
+`python -m app.desktop` starts the server on localhost and wraps it in a
+desktop window. It is the same app either way; the window is only a shell
 around the same page.
 
-- **Windows** renders it with the WebView2 runtime that already ships with
-  Windows 10/11, via [pywebview] (the `desktop` extra). Nothing else to install.
-- **No pywebview?** It falls back to Edge/Chrome in `--app` mode: the same
-  chromeless window, minus the dependency.
-- Links out to YouTube open in your real browser, where you're signed in.
-- Set `WATCHLOG_PORT` to pin the port; otherwise it takes 8000, or the next
-  free port if something else has it.
-- Nothing can print to a console that isn't there, so anything that would
-  have been logged goes to `watchlog-desktop.log` next to the database.
+- On Windows it renders through the WebView2 runtime that ships with Windows
+  10/11, using [pywebview] (the `desktop` extra). Nothing else to install.
+- Without pywebview it falls back to Edge or Chrome in `--app` mode: the same
+  chromeless window, no extra dependency. This is also the path on Linux and
+  macOS if you would rather not install a GUI toolkit.
+- Links out to YouTube open in your normal browser, where you are signed in.
+- Set `WATCHLOG_PORT` to pin the port. Otherwise it uses 8000, or the next free
+  port if something else already has it.
+- There is no console to print to, so anything that would have been logged goes
+  to `watchlog-desktop.log` next to the database.
 
 [pywebview]: https://pywebview.flowrl.com/
 
-## Optional setup
+## Configuration
 
-Copy `.env.example` to `.env` and fill in what you need:
+Copy `.env.example` to `.env` and fill in what you need. All of it is optional.
 
 | Setting | What it does |
 |---|---|
-| `YOUTUBE_API_KEY` | Free Google Cloud key ([get one here](https://console.cloud.google.com/apis/library/youtube.googleapis.com), enable *YouTube Data API v3*). Makes playlist syncs near-instant (50 videos per request). Without it everything still works via yt-dlp, just slower. |
-| `YTDLP_COOKIES_BROWSER` | `firefox`, `chrome`, or `edge` — lets sync read your private **Watch Later** playlist. |
-| `DATABASE_PATH` | Where the SQLite file lives (default `organizer.db`). |
-| `MEDIA_PATH` | Where offline copies are stored (default `media/`). |
-| `DOWNLOAD_MAX_HEIGHT` | Default download quality: `2160` (4K), `1440` (2K), `1080`, `720`… Default `1440`. |
+| `YOUTUBE_API_KEY` | Free Google Cloud key ([get one here](https://console.cloud.google.com/apis/library/youtube.googleapis.com), enable YouTube Data API v3). Makes syncs near-instant: 50 videos per request. Without it, ingestion falls back to yt-dlp. |
+| `YTDLP_COOKIES_BROWSER` | `firefox`, `chrome` or `edge`. Required only to sync your private Watch Later playlist, which the official API cannot read. |
+| `DATABASE_PATH` | Where the SQLite file lives. Default `organizer.db`. |
+| `MEDIA_PATH` | Where offline copies are stored. Default `media/`. |
+| `DOWNLOAD_MAX_HEIGHT` | Default quality ceiling for downloads: `2160`, `1440`, `1080`, `720`, `480`, `360`. Default `1440`. |
 
-For embedding-based theming and recommendations, install the ML extra once
-(~1 GB, includes PyTorch; the model itself downloads on first use):
+Theme suggestions and recommendations get better with the embedding model,
+which is a separate install (~1 GB, includes PyTorch; the model itself
+downloads on first use):
 
 ```bash
 pip install -e ".[ml]"
 ```
 
-## Typical workflow
+Without it the app still runs: keyword rules, custom rules, manual themes and
+theme-affinity recommendations all work on plain numpy.
 
-1. Paste a playlist URL into the sync box.
-2. Click **Embed**, then **Auto-theme** — most videos get sorted; check the
-   **Review queue** tab for the stragglers.
-3. Browse by theme and watch things. As a video winds down a small prompt
-   slides into the corner — thumb it up or down, or ignore it and keep
-   watching.
-4. Open **What should I watch?**, optionally set a time budget, and let it
-   pick for you. The more you vote, the better it gets.
+## Using it
+
+Paste a playlist, channel or video URL into the box at the top and press Enter.
+Re-syncing the same source never duplicates anything; only new videos are
+fetched. Watch Later works if you set `YTDLP_COOKIES_BROWSER`. "Bulk add" takes
+a pile of pasted links at once.
+
+New videos are themed as they arrive by a keyword pass, so the library is
+sorted before you touch anything.
+
+The main page has five tabs.
+
+Browse — the grid, with a sidebar of themes and playlists and their counts.
+Search matches whole words rather than substrings: every word you type has to
+match the start of a word in the title, channel or description, words of three
+or more characters match prefixes, and title and channel hits rank above
+description hits. So "ai" finds AI videos and not airplanes. You can also
+filter to unwatched only, videos with no theme, or offline copies only, and
+sort by newest, oldest, longest, shortest, channel, recently added, most
+watched or recently watched. "Select" turns on multi-select for theming or
+deleting several videos at once.
+
+What should I watch? — a ranked feed built from a profile vector of everything
+you voted on: thumbs up counts positively, thumbs down and skips negatively,
+and a watched video you never voted on counts weakly, because that is the "it
+was fine" case. Results are blended with a recency boost and de-duplicated so
+you do not get five near-identical videos in a row. Filter by theme and by how
+many minutes you have.
+
+Review queue — videos the embedding model could not confidently place, with
+ranked theme suggestions. One click confirms.
+
+Rules — your own expression-to-theme mappings on top of the built-in keywords.
+A rule can be exclusive, meaning matching videos get that theme and no other.
+The app also proposes channel-to-theme rules learned from videos you already
+themed: if most of a channel's videos share a theme, a rule on that channel
+name will theme its future uploads too. Nothing is created without you
+approving it. "Re-theme existing videos" re-runs every rule over the whole
+library; it prunes theme assignments the current rules no longer justify and
+leaves manual ones alone.
+
+Offline — every saved copy with its size, themes and play count. See below.
+
+Themes can be renamed or deleted from the sidebar, and a rename sticks: the
+rule engine will not recreate the old name later. Playlists in the sidebar are
+your own lists, separate from themes, and a video can be in as many as you
+like. Playlists that came from a YouTube sync are read-only, since a re-sync
+overwrites them.
+
+Watching happens in the app. Local copies play from disk, everything else in
+the YouTube embed. A small prompt appears in the corner in the last seconds of
+a video so you can thumb it up or down without interrupting anything; the full
+panel, with an up-next countdown, only appears once the video ends. Every time
+you open a video the play is counted, which is independent of watched and of
+your vote: replaying something never re-marks it or clears a thumb.
 
 Migrating from the old `videos.json` format:
 
@@ -116,89 +170,101 @@ python scripts/migrate_videos_json.py videos.json organizer.db
 
 ## Watching offline
 
-Every video card has an **⬇ offline** chip. Click it and pick:
+Every video card has an offline chip. Click it and pick:
 
-- **Best available** — whatever this particular video actually has. Use this
-  when you don't want to think about it; a 4K upload gives you 4K, a 720p
-  upload gives you 720p.
-- **A ceiling** — *up to* 4K / 2K / 1080p / 720p / 480p / 360p. You get the
-  tallest stream at or below that height, so on a video that tops out at
-  1080p every option above it lands in the same place.
-- **Audio only** — the m4a track, for podcasts and music. Needs no ffmpeg.
+- Best available: whatever this particular video has. A 4K upload gives 4K, a
+  720p upload gives 720p.
+- A ceiling: up to 4K, 2K, 1080p, 720p, 480p or 360p. You get the tallest
+  stream at or below that height, so on a video that tops out at 1080p every
+  option above it lands in the same place.
+- Audio only: the m4a track, for podcasts and music. Needs no ffmpeg.
 
-The file downloads in the background — the chip shows progress, and you can
-keep using the app. Once it's done the card gets an **offline** badge and
-clicking the thumbnail plays the local file instead of the YouTube embed: no
-connection, no ads, and seeking works normally.
+The file downloads in the background, the chip shows progress, and you can keep
+using the app. When it is done the card gets an offline badge and clicking the
+thumbnail plays the local file instead of the YouTube embed: no connection, no
+ads, and seeking works normally.
 
 Up to 1080p you get H.264, which every player handles. Above that YouTube only
-publishes VP9/AV1, so that's what 2K and 4K give you — fine in any current
-browser, occasionally fussy in older desktop players.
+publishes VP9 and AV1, so that is what 2K and 4K give you: fine in any current
+browser, occasionally awkward in older desktop players.
 
-### Offline copies are your favourites shelf
-
-Saving something is a stronger signal than any thumb: it's the small set of
-videos you actually come back to. So the app treats it that way.
-
-- **`offline only`** in the Browse toolbar narrows the grid to saved copies,
-  and it stacks with everything else — pick a theme in the sidebar to get
-  *"my offline Homelab videos"*, or add a search on top.
-- **Replay counts.** Every time you open a video, the play is counted, and the
-  card shows a **▶ 7×** badge. Sort by **most watched** or **recently
-  watched** to surface what you keep returning to. This is independent of
-  watched/thumbs — rewatching never re-marks a video or clears a vote.
-- **The Offline tab** lists every copy with its size, category chips, and play
-  count, filterable by category and sortable by plays, size, or title.
-  **Open folder** and **Show in folder** open the media directory in Explorer
-  (or Finder / your Linux file manager).
+Saved copies double as a favourites shelf, since saving something is a stronger
+signal than a thumb. "offline only" in the Browse toolbar narrows the grid to
+them and stacks with the theme sidebar and the search box. The Offline tab
+lists every copy with size, themes and play count, sortable by plays, size or
+title, with buttons to open the media folder or reveal a single file in it.
 
 Deleting a copy frees the disk space and keeps the video in your library.
-Re-downloading at a different quality replaces it in place — and if that
-fails, the copy you already had is kept rather than lost.
+Re-downloading at a different quality replaces it in place, and if that fails
+the copy you already had is kept rather than lost.
 
 ### Install ffmpeg first
 
-**Without ffmpeg, downloads are capped at 360p.** YouTube only serves a
-single combined video+audio file at 360p; every higher quality comes as two
-separate streams that have to be merged, and ffmpeg is the thing that merges
-them. On Windows:
+Without ffmpeg, downloads are capped at 360p. YouTube serves a single combined
+video+audio file only at 360p; every higher quality comes as two separate
+streams that have to be merged, and ffmpeg is what merges them. On Windows:
 
 ```bash
 winget install Gyan.FFmpeg
 ```
 
-Restart Watchlog afterwards. The **Offline** tab tells you which state you're
-in and labels any quality it can't currently deliver. Audio-only downloads
-never need ffmpeg.
+Restart Watchlog afterwards. The Offline tab shows which state you are in and
+labels any quality it cannot currently deliver. Audio-only downloads never need
+ffmpeg.
 
 ### A note on scope
 
-This is deliberately one video at a time — there's no "download everything"
-button, and there won't be. Bulk-archiving a library is against YouTube's
-Terms of Service, and the disk math is unkind anyway (1080p runs roughly
-100–250 MB per video, so a 500-video backlog is ~75 GB). Saving individual
-videos for a flight or a commute is the use case this is built for.
+One video at a time is deliberate. Bulk-archiving a library is against
+YouTube's Terms of Service, and the disk arithmetic is unfriendly anyway: 1080p
+runs roughly 100-250 MB per video, so a 500-video backlog is about 75 GB.
+Saving a few things for a flight or a commute is the case this is built for.
 
 ## API
 
-The UI is a thin layer over a REST API — interactive docs at
-`http://localhost:8000/docs`. Key endpoints: `POST /sync`, `GET /themes`,
-`GET /themes/{name}/videos`, `PATCH /videos/{id}/watch-state`,
-`GET /recommendations`, `POST /themes/discover`, `GET /review`,
-`POST /videos/{id}/download`, `GET /downloads`, `POST /videos/{id}/play`,
-`POST /downloads/reveal`. `GET /videos` takes `downloaded=true` and
-`sort=played`.
+The UI is a thin layer over a REST API, with interactive docs at
+`http://localhost:8000/docs` while the app is running. Roughly:
+
+- Ingestion: `POST /sync`, `POST /sync/stream` (progress events),
+  `POST /videos`, `POST /videos/bulk/stream`
+- Library: `GET /videos` (search, filters, `downloaded=true`, `sort=played`),
+  `GET|DELETE /videos/{id}`, `POST /videos/bulk/delete`
+- Themes: `GET|POST /themes`, `PATCH|DELETE /themes/{name}`,
+  `GET /themes/{name}/videos`, `POST /videos/{id}/themes`,
+  `DELETE /videos/{id}/themes/{name}`, `POST /videos/themes/bulk`
+- Rules: `GET|POST /rules`, `DELETE /rules/{id}`, `GET /rules/suggestions`,
+  `POST /rules/apply`
+- Playlists: `GET|POST /playlists`, `DELETE /playlists/{id}`,
+  `GET|POST /playlists/{id}/videos`, `DELETE /playlists/{id}/videos/{video_id}`
+- Embeddings and review: `POST /embeddings/build`, `POST /themes/auto-assign`,
+  `POST /themes/discover`, `GET /review`
+- Watching: `PATCH /videos/{id}/watch-state`, `POST /videos/{id}/play`,
+  `GET /recommendations`
+- Downloads: `POST|DELETE /videos/{id}/download`, `GET /downloads`,
+  `POST /downloads/reveal`
 
 ## Development
 
 ```bash
-pytest        # test suite — offline, no API quota, no ML model needed
+pytest
 ```
 
-See [ROADMAP.md](ROADMAP.md) for the design constraints (API quota math,
-why Watch Later needs yt-dlp, why recommendations are content-based) and
-what's next.
+The suite is offline: it fakes the network boundary, so it costs no API quota,
+needs no cookies and does not require the ML extra.
+
+See [ROADMAP.md](ROADMAP.md) for the design constraints behind all this (the
+API quota arithmetic, why Watch Later needs yt-dlp, why recommendations are
+content-based) and what is still on the list.
+
+## Version 2
+
+Everything above is a rewrite. The first version of this repository was a
+FastAPI service that appended video metadata to a `videos.json` file under
+manually chosen categories, and did nothing else with it. Version 2 replaced
+the JSON file with SQLite, added hybrid Data API + yt-dlp ingestion, automatic
+theming, recommendations, offline copies and a UI. The old entry point is still
+in the tree as `main.py` at the repository root; nothing imports it, and
+`scripts/migrate_videos_json.py` exists to move data out of it.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0. See [LICENSE](LICENSE).

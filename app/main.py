@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Watchlog", version="2.0", lifespan=lifespan)
+    app = FastAPI(title="Watchlog", version="2.1", lifespan=lifespan)
     app.include_router(router)
 
     # Serve downloaded files through StaticFiles rather than a FileResponse

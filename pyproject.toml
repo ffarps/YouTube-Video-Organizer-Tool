@@ -1,7 +1,7 @@
 [project]
 name = "watchlog"
-version = "2.0.0"
-description = "Watchlog — local-first YouTube backlog organizer: playlist sync, theming, recommendations"
+version = "2.1.0"
+description = "Watchlog — local YouTube backlog organizer: playlist sync, theming, recommendations, offline copies, desktop window"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",
