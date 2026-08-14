@@ -251,9 +251,11 @@ pytest
 The suite is offline: it fakes the network boundary, so it costs no API quota,
 needs no cookies and does not require the ML extra.
 
-See [ROADMAP.md](ROADMAP.md) for the design constraints behind all this (the
-API quota arithmetic, why Watch Later needs yt-dlp, why recommendations are
-content-based) and what is still on the list.
+[ARCHITECTURE.md](ARCHITECTURE.md) is the map of the code: what each module
+owns, and why the non-obvious parts are the way they are. [ROADMAP.md](ROADMAP.md)
+has the design constraints behind the whole thing (the API quota arithmetic,
+why Watch Later needs yt-dlp, why recommendations are content-based) and what
+is still on the list.
 
 ## What the first version was
 

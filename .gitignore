@@ -24,3 +24,7 @@ myenv/
 
 # Console-less runs log here instead of to a terminal
 watchlog-desktop.log
+
+# Local tooling, not part of the project
+.claude/
+CLAUDE.md
