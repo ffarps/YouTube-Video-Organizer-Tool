@@ -1,6 +1,11 @@
 import pytest
 
-from app.ingest.urls import classify_url, playlist_id_from_url, video_id_from_url
+from app.ingest.urls import (
+    classify_url,
+    extract_video_ids,
+    playlist_id_from_url,
+    video_id_from_url,
+)
 
 VID = "dQw4w9WgXcQ"
 
@@ -64,3 +69,30 @@ def test_classify():
     }
     assert classify_url("https://www.youtube.com/channel/UCabc")["channel_id"] == "UCabc"
     assert classify_url("https://example.com/foo")["kind"] == "unknown"
+
+
+def test_extract_ids_any_separator():
+    text = f"https://youtu.be/{VID}, guitar000ok\n https://www.youtube.com/watch?v=aivideo00ok"
+    ids, invalid = extract_video_ids(text)
+    assert ids == [VID, "aivideo00ok", "guitar000ok"] or set(ids) == {VID, "aivideo00ok", "guitar000ok"}
+    assert invalid == []
+
+
+def test_extract_ids_markdown_mangled_list_dedupes():
+    # real paste: markdown-wrapped links, all pointing at the same video
+    text = (
+        "https://youtu.be/FxWNfXGgucU?si=0HXkEzP025r20x1S\n"
+        "[https://youtu.be/FxWNfXGgucU?si=0HXkEzP025r20x1](https://youtu.be/FxWNfXGgucU?si=0HXkEzP025r20x1S)2\n"
+        "[https://youtu.be/FxWNfXGgucU?si=0HXkEzP025r20x](https://youtu.be/FxWNfXGgucU?si=0HXkEzP025r20x1S)gi\n"
+    )
+    ids, invalid = extract_video_ids(text)
+    assert ids == ["FxWNfXGgucU"]
+    assert invalid == []
+
+
+def test_extract_ids_reports_unrecognized_links():
+    ids, invalid = extract_video_ids(
+        f"https://youtu.be/{VID}\nhttps://example.com/not-a-video\nhello world"
+    )
+    assert ids == [VID]
+    assert invalid == ["https://example.com/not-a-video"]

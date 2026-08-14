@@ -2,11 +2,12 @@
 (collaborative filtering needs many users' interaction data).
 
 Profile vector = weighted mean of embeddings of videos with watch signal:
-ratings map to weights from -0.6 (rated 1) to +1.0 (rated 5), unrated watched
-counts +0.6, skipped counts -0.3; a recency half-life of ~180 days keeps the
-profile tracking current interests. Candidates are ranked by cosine to the
-profile blended with a small recency boost, then MMR re-ranked so the top of
-the feed isn't ten near-duplicates.
+thumbs up counts +1.0, thumbs down -0.6, skipped -0.3, and a watched video
+with no thumb counts a mild +0.2 — that's the everyday "it was okay" case, so
+it must not pull as hard as a deliberate vote. A recency half-life of ~180
+days keeps the profile tracking current interests. Candidates are ranked by
+cosine to the profile blended with a small recency boost, then MMR re-ranked
+so the top of the feed isn't ten near-duplicates.
 
 Cold start (no embedded watch history): theme-affinity counts + recency.
 """
@@ -38,10 +39,10 @@ def _days_since(iso: Optional[str]) -> float:
 
 
 def _signal_weight(status: str, rating: Optional[int]) -> float:
-    if rating is not None:
-        return (rating - 2.5) / 2.5  # 1 -> -0.6, 3 -> +0.2, 5 -> +1.0
+    if rating:  # a vote was cast; 0/None means it wasn't
+        return 1.0 if rating > 0 else -0.6
     if status == "watched":
-        return 0.6
+        return 0.2  # "it was okay": you finished it, but you didn't vote
     if status == "skipped":
         return -0.3
     return 0.0
@@ -88,6 +89,23 @@ def _mmr(candidates: List[dict], vectors: List[np.ndarray], limit: int) -> List[
     return [candidates[i] for i in picked]
 
 
+def _cold_start(
+    conn: sqlite3.Connection, candidates: List[dict], limit: int
+) -> List[dict]:
+    """Theme-affinity + recency ranking over every candidate — the fallback
+    when there aren't enough embedded videos for a similarity-based feed."""
+    affinity = db.theme_affinity(conn)
+    total_affinity = sum(affinity.values()) or 1
+    theme_map = db.themes_for_videos(conn, [v["id"] for v in candidates])
+    for video in candidates:
+        names = theme_map.get(video["id"], [])
+        affinity_score = sum(affinity.get(n, 0) for n in names) / total_affinity
+        recency = 0.5 ** (_days_since(video["published_at"]) / RECENCY_HALF_LIFE_DAYS)
+        video["_score"] = 0.7 * affinity_score + 0.3 * recency
+    candidates.sort(key=lambda v: v["_score"], reverse=True)
+    return candidates[:limit]
+
+
 def recommend(
     conn: sqlite3.Connection,
     theme: Optional[str] = None,
@@ -97,9 +115,9 @@ def recommend(
     candidates = db.unwatched_candidates(conn, theme, max_duration_sec)
     profile = profile_vector(conn)
 
+    scored = []
+    vectors = []
     if profile is not None:
-        scored = []
-        vectors = []
         for video in candidates:
             vector = from_blob(video.get("embedding"))
             if vector is None:
@@ -109,22 +127,17 @@ def recommend(
             video["_score"] = SIMILARITY_WEIGHT * similarity + (1 - SIMILARITY_WEIGHT) * recency
             scored.append(video)
             vectors.append(vector)
+
+    # Profile mode only wins if enough candidates are embedded to fill the feed;
+    # otherwise a handful of stray embeddings would starve the whole library out.
+    if profile is not None and len(scored) >= min(limit, len(candidates)):
         order = np.argsort([-v["_score"] for v in scored])[: max(limit * 4, 40)]
         shortlist = [scored[i] for i in order]
         shortlist_vecs = [vectors[i] for i in order]
         results = _mmr(shortlist, shortlist_vecs, limit)
         mode = "profile"
     else:
-        affinity = db.theme_affinity(conn)
-        total_affinity = sum(affinity.values()) or 1
-        theme_map = db.themes_for_videos(conn, [v["id"] for v in candidates])
-        for video in candidates:
-            names = theme_map.get(video["id"], [])
-            affinity_score = sum(affinity.get(n, 0) for n in names) / total_affinity
-            recency = 0.5 ** (_days_since(video["published_at"]) / RECENCY_HALF_LIFE_DAYS)
-            video["_score"] = 0.7 * affinity_score + 0.3 * recency
-        candidates.sort(key=lambda v: v["_score"], reverse=True)
-        results = candidates[:limit]
+        results = _cold_start(conn, candidates, limit)
         mode = "cold_start"
 
     theme_map = db.themes_for_videos(conn, [v["id"] for v in results])

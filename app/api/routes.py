@@ -1,17 +1,31 @@
+import json
+import queue
 import sqlite3
+import threading
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
-from app import db
+from app import db, downloads
+from app.categorize import rules
 from app.categorize import themes as theming
 from app.categorize.embeddings import EmbeddingUnavailable
 from app.config import Settings, get_settings
+from app.ingest import download as ytdl
 from app.ingest import sync
 from app.models import (
     AddVideoRequest,
     AutoAssignRequest,
+    BulkAddRequest,
+    BulkDeleteRequest,
+    BulkThemeRequest,
     DiscoverRequest,
+    DownloadRequest,
+    PlaylistCreateRequest,
+    PlaylistVideoRequest,
+    RevealRequest,
+    RuleCreateRequest,
     SyncRequest,
     ThemeAssignRequest,
     ThemeCreateRequest,
@@ -44,6 +58,65 @@ def sync_source(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _ndjson_stream(work) -> StreamingResponse:
+    """Run `work(progress_callback)` in a thread, streaming ND-JSON
+    {"progress": ...} events as it advances, then a final {"result": ...}
+    or {"error": ...} line."""
+
+    def event_stream():
+        events: "queue.Queue[tuple]" = queue.Queue()
+
+        def run():
+            try:
+                events.put(("result", work(lambda e: events.put(("progress", e)))))
+            except sync.SyncError as e:
+                events.put(("error", str(e)))
+            except Exception as e:  # surface unexpected failures to the client
+                events.put(("error", f"{type(e).__name__}: {e}"))
+
+        threading.Thread(target=run, daemon=True).start()
+        while True:
+            kind, payload = events.get()
+            yield json.dumps({kind: payload}) + "\n"
+            if kind in ("result", "error"):
+                break
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+
+@router.post("/sync/stream")
+def sync_source_stream(
+    body: SyncRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Like /sync, but streams progress as ND-JSON."""
+    return _ndjson_stream(
+        lambda progress: sync.sync_source(
+            conn,
+            body.url,
+            api_key=settings.youtube_api_key,
+            cookies_browser=settings.ytdlp_cookies_browser,
+            progress=progress,
+        )
+    )
+
+
+@router.post("/videos/bulk/stream")
+def add_videos_stream(
+    body: BulkAddRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Bulk-add videos from pasted free-form text (any separators, markdown
+    links welcome); streams progress as ND-JSON."""
+    return _ndjson_stream(
+        lambda progress: sync.add_videos(
+            conn, body.text, settings.youtube_api_key, progress
+        )
+    )
+
+
 @router.post("/videos", status_code=201)
 def add_video(
     body: AddVideoRequest,
@@ -61,22 +134,81 @@ def add_video(
     return db.get_video(conn, result["video"]["id"])
 
 
+@router.get("/videos")
+def list_videos(
+    search: Optional[str] = None,
+    sort: str = "newest",
+    watched: Optional[bool] = None,
+    unthemed: Optional[bool] = None,
+    downloaded: Optional[bool] = None,
+    limit: int = 200,
+    offset: int = 0,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """Browse/search the whole library, across themes."""
+    videos = db.list_videos(
+        conn, search, sort, watched, unthemed, downloaded, limit, offset
+    )
+    theme_map = db.themes_for_videos(conn, [v["id"] for v in videos])
+    for video in videos:
+        video["themes"] = theme_map.get(video["id"], [])
+    return {"videos": videos}
+
+
 @router.get("/themes")
-def list_themes(conn: sqlite3.Connection = Depends(get_db)):
-    return {"themes": db.list_themes(conn)}
+def list_themes(
+    watched: Optional[bool] = None, conn: sqlite3.Connection = Depends(get_db)
+):
+    """List themes with counts. Pass ``watched=false`` to count only each
+    theme's unwatched videos, matching the Browse "unwatched only" filter."""
+    return {
+        "themes": db.list_themes(conn, watched),
+        "total_videos": db.count_videos(conn, watched),
+    }
+
+
+@router.patch("/themes/{theme_name}")
+def rename_theme(
+    theme_name: str,
+    body: ThemeAssignRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """Rename a theme; renaming onto an existing theme merges into it."""
+    result = db.rename_theme(conn, theme_name, body.name, rules.THEME_KEYWORDS)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Theme not found")
+    conn.commit()
+    return {"result": result, "name": body.name}
+
+
+@router.delete("/themes/{theme_name}")
+def delete_theme(theme_name: str, conn: sqlite3.Connection = Depends(get_db)):
+    """Delete a theme and all its video assignments (videos stay)."""
+    if not db.delete_theme(conn, theme_name):
+        raise HTTPException(status_code=404, detail="Theme not found")
+    conn.commit()
+    return {"message": "Theme deleted"}
 
 
 @router.get("/themes/{theme_name}/videos")
 def videos_by_theme(
     theme_name: str,
     watched: Optional[bool] = None,
+    sort: str = "newest",
+    downloaded: Optional[bool] = None,
     limit: int = 50,
     offset: int = 0,
     conn: sqlite3.Connection = Depends(get_db),
 ):
-    videos = db.videos_by_theme(conn, theme_name, watched, limit, offset)
+    videos = db.videos_by_theme(
+        conn, theme_name, watched, sort=sort, downloaded=downloaded,
+        limit=limit, offset=offset,
+    )
     if videos is None:
         raise HTTPException(status_code=404, detail="Theme not found")
+    theme_map = db.themes_for_videos(conn, [v["id"] for v in videos])
+    for video in videos:
+        video["themes"] = theme_map.get(video["id"], [])
     return {"theme": theme_name, "videos": videos}
 
 
@@ -89,7 +221,14 @@ def get_video(video_id: str, conn: sqlite3.Connection = Depends(get_db)):
 
 
 @router.delete("/videos/{video_id}")
-def delete_video(video_id: str, conn: sqlite3.Connection = Depends(get_db)):
+def delete_video(
+    video_id: str,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    # Unlink the media first: the cascade removes the `downloads` row, and a
+    # forgotten row means a file nothing can ever find again.
+    downloads.remove_files_for(conn, [video_id], settings.media_dir())
     if not db.delete_video(conn, video_id):
         raise HTTPException(status_code=404, detail="Video not found")
     conn.commit()
@@ -133,6 +272,33 @@ def create_theme(body: ThemeCreateRequest, conn: sqlite3.Connection = Depends(ge
     return {"name": body.name, "assigned": len(body.video_ids)}
 
 
+@router.post("/videos/themes/bulk")
+def bulk_assign_theme(
+    body: BulkThemeRequest, conn: sqlite3.Connection = Depends(get_db)
+):
+    """Assign one theme (manual) to many videos at once. Unknown video ids are
+    skipped rather than failing the whole batch."""
+    theme_id = db.get_or_create_theme(conn, body.name)
+    known = db.existing_video_ids(conn, body.video_ids)
+    for video_id in known:
+        db.assign_theme(conn, video_id, theme_id, 1.0, "manual")
+    conn.commit()
+    return {"name": body.name, "assigned": len(known)}
+
+
+@router.post("/videos/bulk/delete")
+def bulk_delete_videos(
+    body: BulkDeleteRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Delete many videos from the library at once."""
+    files = downloads.remove_files_for(conn, body.video_ids, settings.media_dir())
+    deleted = db.delete_videos(conn, body.video_ids)
+    conn.commit()
+    return {"deleted": deleted, "media_removed": files}
+
+
 @router.get("/review")
 def review_queue(limit: int = 50, conn: sqlite3.Connection = Depends(get_db)):
     """Unthemed videos with ranked theme suggestions."""
@@ -163,6 +329,112 @@ def remove_video_theme(
     return db.get_video(conn, video_id)
 
 
+# --- playlists ---------------------------------------------------------------
+
+def _editable_playlist(conn: sqlite3.Connection, playlist_id: str) -> dict:
+    playlist = db.get_playlist(conn, playlist_id)
+    if playlist is None:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    if playlist["kind"] != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="Only local playlists can be edited (synced ones are overwritten on re-sync)",
+        )
+    return playlist
+
+
+@router.get("/playlists")
+def list_playlists(conn: sqlite3.Connection = Depends(get_db)):
+    return {"playlists": db.list_playlists(conn)}
+
+
+@router.post("/playlists", status_code=201)
+def create_playlist(
+    body: PlaylistCreateRequest, conn: sqlite3.Connection = Depends(get_db)
+):
+    playlist = db.create_playlist(conn, body.title)
+    conn.commit()
+    return playlist
+
+
+@router.delete("/playlists/{playlist_id}")
+def delete_playlist(playlist_id: str, conn: sqlite3.Connection = Depends(get_db)):
+    if not db.delete_playlist(conn, playlist_id):
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    conn.commit()
+    return {"message": "Playlist deleted"}
+
+
+@router.get("/playlists/{playlist_id}/videos")
+def playlist_videos(playlist_id: str, conn: sqlite3.Connection = Depends(get_db)):
+    videos = db.playlist_videos(conn, playlist_id)
+    if videos is None:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    theme_map = db.themes_for_videos(conn, [v["id"] for v in videos])
+    for video in videos:
+        video["themes"] = theme_map.get(video["id"], [])
+    return {"playlist": db.get_playlist(conn, playlist_id), "videos": videos}
+
+
+@router.post("/playlists/{playlist_id}/videos", status_code=201)
+def add_playlist_video(
+    playlist_id: str,
+    body: PlaylistVideoRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    _editable_playlist(conn, playlist_id)
+    if db.get_video(conn, body.video_id) is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    db.add_playlist_video(conn, playlist_id, body.video_id)
+    conn.commit()
+    return {"message": "Video added to playlist"}
+
+
+@router.delete("/playlists/{playlist_id}/videos/{video_id}")
+def remove_playlist_video(
+    playlist_id: str, video_id: str, conn: sqlite3.Connection = Depends(get_db)
+):
+    _editable_playlist(conn, playlist_id)
+    if not db.remove_playlist_video(conn, playlist_id, video_id):
+        raise HTTPException(status_code=404, detail="Video not in playlist")
+    conn.commit()
+    return {"message": "Video removed from playlist"}
+
+
+# --- theme rules -------------------------------------------------------------
+
+@router.get("/rules")
+def list_rules(conn: sqlite3.Connection = Depends(get_db)):
+    return {"rules": db.list_theme_rules(conn)}
+
+
+@router.post("/rules", status_code=201)
+def create_rule(body: RuleCreateRequest, conn: sqlite3.Connection = Depends(get_db)):
+    rule = db.add_theme_rule(conn, body.theme, body.pattern, body.exclusive)
+    conn.commit()
+    return rule
+
+
+@router.delete("/rules/{rule_id}")
+def delete_rule(rule_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    if not db.delete_theme_rule(conn, rule_id):
+        raise HTTPException(status_code=404, detail="Rule not found")
+    conn.commit()
+    return {"message": "Rule deleted"}
+
+
+@router.get("/rules/suggestions")
+def rule_suggestions(conn: sqlite3.Connection = Depends(get_db)):
+    """Channel -> theme rules learned from videos you've already themed."""
+    return {"suggestions": rules.suggest_rules(conn)}
+
+
+@router.post("/rules/apply")
+def apply_rules(conn: sqlite3.Connection = Depends(get_db)):
+    """Re-run keyword + custom rules over every stored video."""
+    return rules.reapply(conn)
+
+
 # --- recommendations (Phase 3) ----------------------------------------------
 
 @router.get("/recommendations")
@@ -187,3 +459,112 @@ def update_watch_state(
         raise HTTPException(status_code=404, detail="Video not found")
     conn.commit()
     return db.get_video(conn, video_id)
+
+
+# --- local downloads --------------------------------------------------------
+
+@router.get("/downloads")
+def list_downloads(
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Local copies, plus what this machine is actually capable of.
+
+    The UI polls this while something is in flight, so live byte counts get
+    merged in from memory here — they are never written to SQLite.
+    """
+    live = downloads.live_progress()
+    items = db.list_downloads(conn)
+    # Themes come along so the Offline tab can filter by category without a
+    # second round trip per row.
+    theme_map = db.themes_for_videos(conn, [i["video_id"] for i in items])
+    for item in items:
+        item["progress"] = live.get(item["video_id"])
+        item["themes"] = theme_map.get(item["video_id"], [])
+    return {
+        "downloads": items,
+        "usage": db.downloads_disk_usage(conn),
+        "ffmpeg": ytdl.ffmpeg_available(),
+        "default_height": settings.download_max_height,
+        "quality_choices": ytdl.QUALITY_CHOICES,
+        # Without ffmpeg every choice collapses to 360p. The UI shows this so
+        # you don't pick 4K and quietly receive something far smaller.
+        "max_height": ytdl.effective_height(max(ytdl.QUALITY_CHOICES)),
+    }
+
+
+@router.post("/videos/{video_id}/download", status_code=202)
+def start_download(
+    video_id: str,
+    body: Optional[DownloadRequest] = None,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Archive one video for offline watching; returns as soon as the job
+    starts, since a 4K pull runs for minutes. Poll /downloads for progress."""
+    body = body or DownloadRequest()
+    if db.get_video(conn, video_id) is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    try:
+        return downloads.start(
+            conn,
+            video_id,
+            settings.media_dir(),
+            # None = no ceiling, i.e. whatever this video actually has.
+            max_height=None if body.best
+            else (body.max_height or settings.download_max_height),
+            audio_only=body.audio_only,
+            cookies_browser=settings.ytdlp_cookies_browser,
+        )
+    except downloads.DownloadBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.post("/downloads/reveal")
+def reveal_download(
+    body: Optional[RevealRequest] = None,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Open the media folder in the OS file manager, selecting one video's
+    file when asked. Local-only convenience — the app already runs on your
+    desktop, so 'where is this file' should not need a manual dig."""
+    body = body or RevealRequest()
+    filename = None
+    if body.video_id:
+        row = db.get_download(conn, body.video_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="No local copy of that video")
+        filename = row["filename"]
+    try:
+        target = downloads.reveal(settings.media_dir(), filename)
+    except (OSError, ValueError) as e:
+        raise HTTPException(status_code=500, detail=f"Could not open the folder: {e}")
+    return {"opened": str(target)}
+
+
+@router.post("/videos/{video_id}/play")
+def record_play(video_id: str, conn: sqlite3.Connection = Depends(get_db)):
+    """Count a play. Called when the player opens, so rewatches accumulate —
+    this is what makes a favourite visible as a number."""
+    count = db.record_play(conn, video_id)
+    if count is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return {"video_id": video_id, "play_count": count}
+
+
+@router.delete("/videos/{video_id}/download")
+def delete_download(
+    video_id: str,
+    conn: sqlite3.Connection = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Delete the local file and free the disk space. The video stays in the
+    library — this only undoes the download."""
+    try:
+        removed = downloads.remove(conn, video_id, settings.media_dir())
+    except downloads.DownloadBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not removed:
+        raise HTTPException(status_code=404, detail="No local copy of that video")
+    return {"message": "Local copy deleted"}

@@ -1,4 +1,4 @@
-# YouTube Video Organizer
+# Watchlog
 
 Local-first FastAPI app that syncs YouTube playlists into SQLite, auto-themes
 videos, and (Phase 3) recommends what to watch. See ROADMAP.md for phases and
@@ -7,11 +7,14 @@ design constraints.
 ## Commands
 
 ```bash
-pip install -e ".[dev]"          # install (Python >= 3.11)
+pip install -e ".[dev,desktop]"  # install (Python >= 3.11); desktop = pywebview window
 pip install -e ".[dev,ml]"       # + torch/sentence-transformers/sklearn (Phase 2/3 ML)
 pytest                           # run tests (quota-free, no network, no torch needed)
-uvicorn app.main:app --reload    # UI at :8000/, API docs at /docs
-start.bat                        # Windows one-click: installs deps if missing, opens browser
+winget install Gyan.FFmpeg       # optional: unlocks downloads above 360p
+python -m app.desktop            # app in its own window (no console, no browser)
+uvicorn app.main:app --reload    # same app as a web page: :8000/, API docs at /docs
+start.bat                        # Windows one-click: installs deps if missing, opens the window
+start.bat browser                # ...the old way instead: console + browser + --reload
 python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy import
 ```
 
@@ -22,6 +25,10 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   50 videos/quota unit); without it, everything falls back to yt-dlp.
 - `app/db.py` — sqlite3 schema + all queries. Video identity is the 11-char
   YouTube id. `video_themes` is many-to-many (a video can have several themes).
+  Browse search (`list_videos`) uses the `search_hit` SQL function, not LIKE:
+  every typed word must match at a word start (3+ chars match prefixes,
+  shorter ones whole words), URLs are stripped from descriptions first, and
+  title/channel hits sort above description-only ones.
 - `app/ingest/urls.py` — URL → id canonicalization; `classify_url` decides
   video/playlist/channel/watch_later.
 - `app/ingest/sync.py` — orchestrator; only fetches metadata for ids not
@@ -29,26 +36,114 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
 - `app/ingest/ytdlp.py` — flat listing + keyless fallback. Watch Later is
   ONLY reachable this way (Data API blocks WL), needs
   `YTDLP_COOKIES_BROWSER` set.
+- `app/ingest/download.py` — the ONLY place the app writes media bytes;
+  everything else in `ingest` is metadata-only (`skip_download`). Single
+  video per call, no bulk path (ToS + disk). Above 360p YouTube splits
+  audio into its own stream, so `_format_selector` silently degrades to the
+  progressive format when ffmpeg is missing rather than failing — check
+  `ffmpeg_available()` before promising a height. `max_height=None` means
+  "best this video has". **Codec preference lives in `FORMAT_SORT`, never
+  in the selector**: YouTube only serves H.264 up to 1080p, so naming
+  `vcodec^=avc1` in the selector made a request for 4K match the 1080p
+  branch first and silently return 1080p. `format_sort` ranks by `res`
+  first and uses h264 only to break ties at the same height.
+- `app/downloads.py` — job manager: thread per download so the request
+  returns immediately, live byte counts in memory (`_active`), durable
+  status in the `downloads` table. `reset_stale` runs in the lifespan
+  because nothing survives a restart. `media_file` is the filesystem
+  boundary — it refuses paths that escape MEDIA_PATH. A re-download
+  removes the old file only *after* the new one lands, and restores the
+  previous row on failure (`db.restore_download`): YouTube 403s on the
+  adaptive streams often enough that deleting first regularly traded a
+  working copy for nothing. `_clean_partials` sweeps the `.part`/`.ytdl`
+  leftovers a failed run drops, which no table points at. `reveal` opens
+  the media folder in the OS file manager (explorer /select on Windows;
+  explorer exits 1 even on success, so its status is not checked).
 - `app/categorize/rules.py` — word-boundary, scored, multi-label keyword
   themes applied at ingest (URLs stripped from text first — "watch?v=" used
-  to match the Watches theme).
+  to match the Watches theme). Evidence is field-weighted (title/channel
+  1.0, tags 0.5, description ⅓ — tags and descriptions are keyword spam).
+  One mention anywhere qualifies (`MIN_EVIDENCE` = ⅓); noise is filtered
+  *relatively* instead — a theme is dropped if it has less than `KEEP_RATIO`
+  (0.6) of the winner's evidence, unless it reaches `STRONG_EVIDENCE` (1.0,
+  a title/channel hit), which always survives. Requiring a full unit to
+  qualify was what left ~40% of a playlist untagged. `rules.reapply`
+  reconciles: prunes rule-sourced assignments the current rules no longer
+  justify, never touches manual/embedding ones. User-defined rules (`theme_rules` table,
+  managed from the UI Rules tab via `/rules`) add expression → theme
+  mappings on top; an *exclusive* rule gives matching videos ONLY that
+  theme. `rules.reapply` (POST `/rules/apply`) re-runs everything over
+  stored videos.
 - `app/categorize/embeddings.py` — lazy sentence-transformers load
   (multilingual MiniLM); vectors are L2-normalized float32 blobs, so cosine
   = dot product. Everything else runs on plain numpy without the [ml] extra.
 - `app/categorize/themes.py` — prototype-based auto-assign (threshold 0.45),
   review queue, HDBSCAN discovery.
-- `app/recommend/engine.py` — profile vector from watch_state (ratings map
-  to −0.6…+1.0 weights, 180-day half-life), cosine + recency, MMR with a
-  redundancy⁴ penalty targeting near-duplicates.
+- `app/recommend/engine.py` — profile vector from watch_state (thumbs up +1.0,
+  down −0.6, skipped −0.3, watched-but-unvoted +0.2, 180-day half-life),
+  cosine + recency, MMR with a redundancy⁴ penalty targeting near-duplicates.
+  `watch_state.rating` is a thumb (−1/+1), not a star score — NULL on a
+  watched video is the deliberate "it was okay" tier, which is why it must
+  stay a weak signal. `db.SCHEMA_VERSION` guards the one-way 5-star →
+  thumbs migration in `init_db` (it can't be idempotent: a stored 1 means
+  one star before it runs and thumbs up after) — so **never gate a new
+  migration on `SCHEMA_VERSION`**; bumping it re-runs the ratings step and
+  flips every thumbs up to thumbs down. `_migrate_play_counters` shows the
+  pattern: guard on `PRAGMA table_info` instead.
+- `watch_state.play_count` / `last_played_at` — rewatches, counted per
+  player open (`POST /videos/{id}/play`), deliberately independent of
+  `status` and `rating`. Reaching for something again is what identifies a
+  favourite, and it must not clear a thumb or re-mark anything watched.
+  Offline copies are the same idea from the other side, so `list_videos`
+  and `videos_by_theme` take a `downloaded` filter (only `status='done'`
+  counts — a queued or failed row has no file behind it).
 - `app/api/routes.py` — all endpoints; DB connection lives on
-  `app.state.db` (set in the lifespan in `app/main.py`).
+  `app.state.db` (set in the lifespan in `app/main.py`). Downloaded files
+  are served by a `StaticFiles` mount at `/media`, NOT a FileResponse
+  endpoint — StaticFiles answers Range requests, which is what makes
+  seeking work in a local `<video>`. Deleting a video unlinks its media
+  *before* the row, since `ON DELETE CASCADE` takes the row and leaves the
+  file orphaned.
+- `app/desktop.py` — the desktop shell, and the only entry point that owns a
+  window. Uvicorn goes on a daemon thread (that's supported: uvicorn skips
+  its signal handlers off the main thread) and the GUI keeps the main
+  thread; closing the window sets `should_exit`, so there is no orphan
+  server. Two window backends: pywebview/WebView2 (the `desktop` extra), and
+  Chromium `--app` with its own `--user-data-dir` as a zero-dependency
+  fallback — the private profile is what makes the browser process a child
+  we can wait on. Everything here is shaped by there being no console:
+  `_redirect_streams` fixes `sys.stdout is None` under `pythonw.exe` before
+  uvicorn's first log line kills the process, failures go to a MessageBox,
+  and `reveal()` runs `show()` + `restore()` because Windows applies the
+  launcher's show state to the first window a process opens — a hidden or
+  minimized launch is otherwise indistinguishable from a crash. pywebview's
+  `private_mode` default would drop the localStorage colour theme every run,
+  hence `storage_path`.
+- Launchers: `Watchlog.vbs` (silent — wscript never shows a console, a batch
+  file always does) → `start.bat` for the one-time install → `pythonw -m
+  app.desktop`. `create-desktop-shortcut.bat` points the Desktop icon at
+  wscript + the .vbs. In the .vbs the dependency probe runs with window style
+  0 (hide the console) but the app **must** use style 1: style 0 propagates
+  to the app's own window and it opens invisible.
 - `static/index.html` — the whole frontend, vanilla JS, served at `/`.
-  No build step; talks to the API with fetch.
+  No build step; talks to the API with fetch. Voting never touches playback:
+  `#votePill` is a corner nudge in the last ~12s that auto-fades, and
+  `#rateCard` (the full panel + up-next countdown) only appears once the
+  video has actually ended. The player swaps between the YouTube iframe and
+  `#localPlayer` (a `<video>` on `/media`) — everything downstream reads
+  `playerClock()` instead of branching, and hiding the iframe needs an
+  explicit `iframe[hidden]` rule because `#playerHost iframe` outranks the
+  UA's `[hidden]`. Download state polls `/downloads` only while something is
+  in flight and repaints individual cards, never the grid (scroll position).
 
 ## Conventions
 
 - Pydantic v2 only (`model_dump`, no `.dict()` overrides).
 - Never call `search.list` (100 quota units); reads are 1 unit per 50 items.
 - Tests fake the network boundary (`sync._fetch_metadata`,
-  `ytdlp.list_playlist`) — keep them quota-free and offline.
+  `ytdlp.list_playlist`, `download.download_video`) — keep them quota-free
+  and offline. Anything that starts a download must poll like the UI does;
+  the job runs on a background thread.
+- Never add a bulk-download path. One video per request is a deliberate
+  limit, not an oversight.
 - Secrets in `.env` (gitignored); `.env.example` documents the keys.

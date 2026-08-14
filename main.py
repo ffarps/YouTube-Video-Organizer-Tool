@@ -9,7 +9,7 @@ import uuid
 import json
 import os
 
-app = FastAPI(title="YouTube Video Organizer", version="v1")
+app = FastAPI(title="Watchlog", version="v1")
 
 
 # Data Models

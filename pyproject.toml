@@ -1,11 +1,11 @@
 [project]
-name = "youtube-video-organizer"
+name = "watchlog"
 version = "2.0.0"
-description = "Local-first YouTube video organizer: playlist sync, theming, recommendations"
+description = "Watchlog — local-first YouTube backlog organizer: playlist sync, theming, recommendations"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",
-    "uvicorn>=0.30,<1",
+    "uvicorn[standard]>=0.30,<1",  # [standard] pulls in watchfiles for fast --reload
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.3,<3",
     "yt-dlp>=2025.1.1",
@@ -18,12 +18,22 @@ dev = [
     "pytest>=8,<9",
     "httpx>=0.27,<1",
 ]
+# Native desktop window (app/desktop.py). On Windows this renders through the
+# WebView2 runtime that ships with Windows 10/11 — nothing else to install.
+# Without this extra the app still opens, in a chromeless browser window.
+desktop = [
+    "pywebview>=5.3",
+]
 # Embedding-based theming and clustering (Phase 2). Without this extra the
 # app still works: rule themes, manual themes, and cold-start recommendations.
 ml = [
     "sentence-transformers>=3.0",
     "scikit-learn>=1.5",
 ]
+
+# gui-scripts, not scripts: the generated watchlog.exe starts without a console.
+[project.gui-scripts]
+watchlog = "app.desktop:main"
 
 [tool.setuptools]
 packages = ["app", "app.ingest", "app.categorize", "app.recommend", "app.api"]

@@ -1,6 +1,6 @@
 """Canonicalize YouTube URLs: extract video ids, playlist ids, and source kind."""
 import re
-from typing import Optional
+from typing import List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -36,6 +36,40 @@ def video_id_from_url(url: str) -> Optional[str]:
     if len(parts) >= 2 and parts[0] in ("shorts", "embed", "live", "v"):
         return parts[1] if VIDEO_ID_RE.match(parts[1]) else None
     return None
+
+
+# URLs inside free-form text; stops at whitespace and markdown/punctuation
+# delimiters so "[url](url)" and "url, url" both split cleanly.
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\]\)\}>\"',;]+")
+
+
+def extract_video_ids(text: str) -> Tuple[List[str], List[str]]:
+    """Pull every recognizable video id out of pasted free-form text.
+
+    Accepts any separator style (newlines, commas, spaces) and URLs wrapped
+    in markdown brackets; bare 11-char ids also work. Returns
+    (unique ids in first-seen order, unrecognized url-like entries)."""
+    ids: List[str] = []
+    seen = set()
+    invalid: List[str] = []
+
+    for url in _URL_IN_TEXT_RE.findall(text):
+        vid = video_id_from_url(url)
+        if vid is None:
+            invalid.append(url)
+        elif vid not in seen:
+            seen.add(vid)
+            ids.append(vid)
+
+    # whatever remains after removing URLs: bare ids and junk
+    for token in re.split(r"[\s,;]+", _URL_IN_TEXT_RE.sub(" ", text)):
+        if VIDEO_ID_RE.match(token):
+            if token not in seen:
+                seen.add(token)
+                ids.append(token)
+        elif "youtu" in token.lower():  # a mangled link; anything else is noise
+            invalid.append(token)
+    return ids, invalid
 
 
 def playlist_id_from_url(url: str) -> Optional[str]:

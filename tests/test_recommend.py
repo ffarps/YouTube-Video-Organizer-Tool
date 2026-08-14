@@ -9,11 +9,11 @@ NEAR_AI = [0.05, 0.95, 0, 0]
 
 
 def test_profile_recommendations_rank_by_taste(conn):
-    # loved a guitar video, disliked an AI video
+    # thumbs up on a guitar video, thumbs down on an AI video
     make_video(conn, "watchedgtr1", "watched guitar", embedding=GUITAR)
-    db.set_watch_state(conn, "watchedgtr1", status="watched", rating=5)
+    db.set_watch_state(conn, "watchedgtr1", status="watched", rating=1)
     make_video(conn, "watchedai01", "watched ai", embedding=AI)
-    db.set_watch_state(conn, "watchedai01", status="watched", rating=1)
+    db.set_watch_state(conn, "watchedai01", status="watched", rating=-1)
 
     make_video(conn, "candidgtr01", "guitar candidate", embedding=NEAR_GUITAR)
     make_video(conn, "candidai001", "ai candidate", embedding=NEAR_AI)
@@ -31,7 +31,7 @@ def test_profile_recommendations_rank_by_taste(conn):
 
 def test_duration_and_theme_filters(conn):
     make_video(conn, "watchedgtr1", "w", embedding=GUITAR)
-    db.set_watch_state(conn, "watchedgtr1", status="watched", rating=5)
+    db.set_watch_state(conn, "watchedgtr1", status="watched", rating=1)
     make_video(
         conn, "longvideo01", "long", theme="Guitar", embedding=NEAR_GUITAR,
         duration_sec=4000,
@@ -71,7 +71,7 @@ def test_cold_start_uses_theme_affinity(conn):
 
 def test_mmr_diversifies(conn):
     make_video(conn, "watchedgtr1", "w", embedding=GUITAR)
-    db.set_watch_state(conn, "watchedgtr1", status="watched", rating=5)
+    db.set_watch_state(conn, "watchedgtr1", status="watched", rating=1)
     # five near-identical guitar candidates and one different-but-relevant
     for i in range(5):
         make_video(conn, f"dupe000000{i}", f"dupe {i}", embedding=NEAR_GUITAR)

@@ -47,8 +47,18 @@ def fetch_video_full(url_or_id: str) -> dict:
 
 def fetch_videos_full(video_ids: List[str]) -> List[dict]:
     """Full extraction for many ids — slow (one fetch per video); used only
-    when no Data API key is configured."""
-    return [fetch_video_full(vid) for vid in video_ids]
+    when no Data API key is configured.
+
+    Public playlists can contain private/deleted/region-blocked entries;
+    those are skipped instead of failing the whole sync (the Data API path
+    behaves the same way — videos.list silently omits them)."""
+    videos = []
+    for vid in video_ids:
+        try:
+            videos.append(fetch_video_full(vid))
+        except yt_dlp.utils.DownloadError:
+            continue
+    return videos
 
 
 def _map_info(info: dict) -> dict:

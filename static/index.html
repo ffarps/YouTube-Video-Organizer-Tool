@@ -3,23 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YouTube Video Organizer</title>
+<title>My Watch Log</title>
+<link rel="icon" href="/static/favicon.ico">
 <script>document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";</script>
 <style>
   :root {
     --bg: #0f1115; --panel: #171a21; --panel2: #1e2230; --text: #e6e9ef;
     --muted: #8b93a7; --accent: #e33d3d; --accent2: #3d7ee3; --ok: #2fbf71;
-    --border: #262b38; --star: #f5b942;
+    --border: #262b38;
   }
   html[data-theme="light"] {
     --bg: #f5f6f8; --panel: #ffffff; --panel2: #eceef2; --text: #1a1d24;
     --muted: #5c6474; --accent: #c62828; --accent2: #2f6fd0; --ok: #1e8e5a;
-    --border: #d8dce4; --star: #d99a00;
+    --border: #d8dce4;
   }
   html[data-theme="mono"] {
     --bg: #ffffff; --panel: #ffffff; --panel2: #f2f2f2; --text: #111111;
     --muted: #666666; --accent: #111111; --accent2: #111111; --ok: #111111;
-    --border: #cccccc; --star: #111111;
+    --border: #cccccc;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
@@ -28,6 +29,10 @@
   header h1 span { color: var(--accent); }
   #syncForm { display: flex; flex: 1; min-width: 260px; gap: .5rem; }
   #syncUrl { flex: 1; padding: .5rem .7rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  #syncProgress { flex-basis: 100%; display: flex; align-items: center; gap: .6rem; }
+  #syncProgress .barwrap { flex: 1; height: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+  #syncBar { height: 100%; width: 0%; background: var(--accent2); border-radius: 999px; transition: width .25s; }
+  #syncLabel { color: var(--muted); font-size: .78rem; white-space: nowrap; }
   button { border: 1px solid var(--border); background: var(--panel2); color: var(--text); padding: .5rem .8rem; border-radius: 8px; cursor: pointer; font-size: .85rem; }
   button:hover { border-color: var(--accent2); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -44,25 +49,165 @@
   .tabs button.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
   .toolbar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1rem; color: var(--muted); font-size: .85rem; }
   .toolbar input[type=number], .toolbar select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: .35rem .5rem; width: 90px; }
+  .toolbar select#sortBy { width: auto; }
+  #searchBox { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: .4rem .55rem; width: min(280px, 100%); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: .9rem; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-  .thumbwrap { position: relative; aspect-ratio: 16/9; background: #000; }
+  .card.sel { outline: 2px solid var(--accent2); outline-offset: 2px; }
+  body.selecting .grid .card { cursor: pointer; }
+  body.selecting .grid .card .thumbwrap { cursor: pointer; }
+  body.selecting .grid .card.picked { outline: 3px solid var(--accent); outline-offset: 2px; }
+  body.selecting .grid .card::before { content: ""; position: absolute; top: .5rem; left: .5rem; z-index: 3; width: 20px; height: 20px; border-radius: 5px; border: 2px solid #fff; background: rgba(0,0,0,.45); box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+  body.selecting .grid .card.picked::before { background: var(--accent); border-color: var(--accent); }
+  body.selecting .grid .card.picked::after { content: "\2713"; position: absolute; top: .5rem; left: .5rem; z-index: 4; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: .8rem; font-weight: 700; }
+  body.selecting .grid .card { position: relative; }
+  #selBar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; gap: .5rem; align-items: center; background: var(--panel2); border: 1px solid var(--accent); border-radius: 12px; padding: .55rem .7rem; box-shadow: 0 6px 24px rgba(0,0,0,.35); max-width: 94vw; flex-wrap: wrap; }
+  #selBar[hidden] { display: none; }
+  #selCount { font-size: .85rem; color: var(--muted); white-space: nowrap; }
+  #selTheme { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: .4rem .55rem; width: 180px; }
+  .selbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #selDelete { border-color: var(--accent); color: var(--accent); }
+  #selDelete:hover { background: var(--accent); color: #fff; }
+  .thumbwrap { position: relative; aspect-ratio: 16/9; background: #000; cursor: pointer; }
   .thumbwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.8); padding: 1px 6px; border-radius: 5px; font-size: .75rem; }
+  .thumbwrap::after { content: "\25B6"; position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; font-size: 2.4rem; color: #fff; background: rgba(0,0,0,.3); opacity: 0; transition: opacity .15s; pointer-events: none; }
+  .thumbwrap:hover::after { opacity: 1; }
+  #playerModal, #bulkModal { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.90); display: flex; align-items: center; justify-content: center; }
+  #playerModal[hidden], #bulkModal[hidden] { display: none; }
+  #bulkBox { width: min(640px, 94vw); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  #bulkBox .modalhead { display: flex; justify-content: space-between; align-items: center; padding: .5rem .8rem; font-weight: 600; }
+  #bulkText { display: block; width: calc(100% - 1.6rem); margin: 0 .8rem; height: 180px; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem; font-family: ui-monospace, Consolas, monospace; font-size: .82rem; }
+  #bulkBox .modalfoot { display: flex; justify-content: flex-end; padding: .6rem .8rem; }
+  #playerBox { width: min(1600px, 94vw, calc(88vh * 16 / 9)); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  #playerHead { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .5rem .8rem; }
+  #playerTitle { font-weight: 600; font-size: .95rem; }
+  #playerClose { font-size: 1.05rem; padding: .15rem .6rem; }
+  #playerHost { aspect-ratio: 16/9; background: #000; position: relative; }
+  #playerHost iframe { width: 100%; height: 100%; display: block; border: 0; }
+  /* the nudge in the last seconds: a small pill in the corner. It never
+     covers the frame and never touches playback — vote and keep watching. */
+  #votePill { position: absolute; right: 16px; bottom: 16px; z-index: 3; display: flex; align-items: center; gap: .6rem;
+    padding: .5rem .6rem .5rem 1.05rem; border-radius: 999px; background: rgba(10,12,16,.85);
+    border: 1px solid rgba(255,255,255,.15); box-shadow: 0 8px 28px rgba(0,0,0,.55); backdrop-filter: blur(6px);
+    opacity: 0; transform: translateY(10px); transition: opacity .28s, transform .28s; }
+  #votePill[hidden] { display: none; }
+  #votePill.show { opacity: 1; transform: none; }
+  #vpLabel { font-size: .95rem; color: #e6e9ef; white-space: nowrap; }
+  .vote-mini { padding: .35rem .55rem; border-radius: 999px; border: 1px solid transparent; background: rgba(255,255,255,.09);
+    font-size: 1.45rem; line-height: 1; filter: grayscale(1); opacity: .7; transition: filter .12s, opacity .12s, transform .1s; }
+  .vote-mini:hover { opacity: 1; transform: scale(1.12); border-color: transparent; }
+  .vote-mini.on { filter: none; opacity: 1; background: rgba(255,255,255,.2); }
+  /* the end-of-video panel: only ever shown once the video is actually over,
+     so the frame is already spent — solid black, centered */
+  #rateCard { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 1.2rem;
+    background: #000; pointer-events: none; opacity: 0; transition: opacity .3s; }
+  #rateCard.show { opacity: 1; pointer-events: auto; }
+  #rateInner { pointer-events: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: .9rem 1.1rem 1rem; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.55); max-width: 92%; }
+  #rateInner .rc-title { font-size: 1rem; font-weight: 600; }
+  #rateInner .rc-sub { font-size: .8rem; color: var(--muted); margin: .15rem 0 .7rem; }
+  #rateInner .rc-sub:empty { display: none; }
+  #nextUp { margin: .1rem 0 .85rem; padding: .5rem .7rem; border: 1px solid var(--border); border-radius: 10px; background: var(--panel2); }
+  #nextUp .nu-label { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  #nextUp .nu-title { font-size: .9rem; font-weight: 600; margin-top: .15rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #rateVote { display: flex; gap: .6rem; justify-content: center; margin-bottom: .85rem; }
+  .vote-big { display: flex; flex-direction: column; align-items: center; gap: .35rem; padding: .6rem 1.15rem; font-size: .76rem; border-radius: 12px; }
+  .vote-big span { font-size: 1.8rem; line-height: 1; filter: grayscale(1); opacity: .5; transition: filter .12s, opacity .12s, transform .1s; }
+  .vote-big:hover span { transform: scale(1.12); opacity: .9; }
+  .vote-big.on span { filter: none; opacity: 1; }
+  .vote-big.up.on { border-color: var(--ok); color: var(--ok); }
+  .vote-big.down.on { border-color: var(--accent); color: var(--accent); }
+  #rateCard .rc-actions { display: flex; gap: .5rem; justify-content: center; align-items: center; }
+  #rateCard .rc-actions button { font-size: .82rem; }
+  #rateNext { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  #rateNext:hover { filter: brightness(1.1); }
+  #playerActions { display: flex; align-items: center; gap: .8rem; padding: .55rem .8rem; }
+  #playerYt { margin-left: auto; color: var(--accent2); font-size: .85rem; text-decoration: none; }
+  .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.8); color: #fff; padding: 1px 6px; border-radius: 5px; font-size: .75rem; }
+  .actions .btns { display: flex; gap: .35rem; }
+  .carddel { font-size: .75rem; padding: .3rem .6rem; }
+  .carddel:hover { border-color: var(--accent); color: var(--accent); }
   .score { position: absolute; left: 6px; top: 6px; background: var(--accent2); color: #fff; padding: 1px 7px; border-radius: 5px; font-size: .72rem; }
   .watchedmark { position: absolute; left: 6px; bottom: 6px; background: var(--ok); color: var(--bg); padding: 1px 7px; border-radius: 5px; font-size: .72rem; font-weight: 600; }
-  .card .body { padding: .6rem .7rem .7rem; display: flex; flex-direction: column; gap: .4rem; flex: 1; }
-  .card a.title { color: var(--text); text-decoration: none; font-size: .9rem; font-weight: 600; line-height: 1.25; }
+  /* Same corner as .watchedmark — a video is either "watched" or carries a
+     replay count, never both badges at once. */
+  .playmark { position: absolute; left: 6px; bottom: 6px; background: var(--accent2); color: #fff; padding: 1px 7px; border-radius: 5px; font-size: .72rem; font-weight: 600; }
+  .card .body { padding: .6rem .7rem .7rem; display: flex; flex-direction: column; gap: .4rem; height: 10.5rem; }
+  .card a.title { color: var(--text); text-decoration: none; font-size: .9rem; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .card a.title:hover { color: var(--accent2); }
-  .card .meta { color: var(--muted); font-size: .78rem; }
-  .chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .card .meta { color: var(--muted); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chips { display: flex; flex-wrap: wrap; gap: .3rem; flex: 1 1 0; min-height: 0; overflow-y: auto; align-content: flex-start; }
   .chip { background: var(--panel2); border: 1px solid var(--border); font-size: .7rem; padding: 1px 8px; border-radius: 999px; color: var(--muted); }
   .chip.suggest { cursor: pointer; color: var(--text); border-color: var(--accent2); }
   .chip.suggest:hover { background: var(--accent2); color: #fff; }
+  .chip .x { cursor: pointer; margin-left: .35rem; font-weight: 700; }
+  .chip .x:hover { color: var(--accent); }
+  #ruleForm { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  #ruleForm input[type=text] { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: .4rem .55rem; }
+  .rule-row { display: flex; align-items: center; gap: .6rem; padding: .45rem .6rem; border: 1px solid var(--border); border-radius: 8px; margin-bottom: .4rem; background: var(--panel); font-size: .85rem; max-width: 640px; }
+  .rule-row .pat { font-family: ui-monospace, Consolas, monospace; background: var(--panel2); padding: 1px 7px; border-radius: 6px; }
+  .rule-row .excl { color: var(--accent); font-size: .72rem; border: 1px solid var(--accent); border-radius: 999px; padding: 0 7px; }
+  .rule-row .del { margin-left: auto; cursor: pointer; color: var(--muted); font-weight: 700; }
+  .rule-row .del:hover { color: var(--accent); }
+  #ruleSuggestions { max-width: 640px; margin-bottom: 1.1rem; }
+  #ruleSuggestions h3 { font-size: .78rem; text-transform: uppercase; color: var(--muted); margin: 0 0 .5rem; letter-spacing: .03em; }
+  .sugg-row { display: flex; align-items: center; gap: .6rem; padding: .45rem .6rem; border: 1px dashed var(--accent2); border-radius: 8px; margin-bottom: .4rem; background: var(--panel); font-size: .85rem; }
+  .sugg-row .count { color: var(--muted); font-size: .78rem; }
+  .sugg-row .grow { margin-left: auto; display: flex; gap: .4rem; }
+  .sugg-row button { padding: .3rem .6rem; font-size: .8rem; }
+  .sugg-row .dismiss { background: transparent; border-color: transparent; color: var(--muted); }
+  .hint { color: var(--muted); font-size: .85rem; margin-bottom: 1rem; max-width: 640px; line-height: 1.45; }
+  #btnNewPlaylist { width: 100%; margin-top: .35rem; font-size: .78rem; padding: .32rem; color: var(--muted); }
+  .theme-item .pldel { cursor: pointer; margin-left: .35rem; font-weight: 700; }
+  .theme-item .pldel:hover { color: var(--accent); }
+  .theme-item .tren { cursor: pointer; margin-left: .4rem; }
+  .theme-item .tren:hover { color: var(--accent2); }
+  .theme-item .tren, .theme-item .pldel { visibility: hidden; }
+  .theme-item:hover .tren, .theme-item:hover .pldel { visibility: visible; }
+  #ctxMenu { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; min-width: 170px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+  #ctxMenu .mi { padding: .45rem .75rem; cursor: pointer; font-size: .85rem; }
+  #ctxMenu .mi:hover { background: var(--panel2); }
+  .chip.addlist { cursor: pointer; color: var(--text); border-style: dashed; }
+  .chip.addlist:hover { background: var(--panel2); }
+  .chipinput { font-size: .75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent2); background: var(--bg); color: var(--text); width: 150px; }
+  .chipinput:focus { outline: none; }
+  .chip.plrm { cursor: pointer; color: var(--text); border-color: var(--accent); }
+  .chip.plrm:hover { background: var(--accent); color: #fff; }
   .actions { margin-top: auto; display: flex; justify-content: space-between; align-items: center; }
-  .stars span { cursor: pointer; color: var(--muted); font-size: 1rem; }
-  .stars span.on { color: var(--star); }
+  .vote { display: flex; gap: .4rem; }
+  .vote span { cursor: pointer; font-size: 1rem; line-height: 1; filter: grayscale(1); opacity: .35; transition: filter .12s, opacity .12s, transform .1s; }
+  .vote span:hover { opacity: .85; transform: scale(1.15); }
+  .vote span.on { filter: none; opacity: 1; }
   .watchbtn { font-size: .75rem; padding: .3rem .6rem; }
+  /* --- offline copies --- */
+  .dlmark { position: absolute; right: 6px; top: 6px; background: var(--accent2); color: #fff; padding: 1px 7px; border-radius: 5px; font-size: .72rem; font-weight: 600; }
+  .dlmark.audio { background: var(--panel2); color: var(--text); border: 1px solid var(--accent2); }
+  /* Lives in the chips row, not the button row: .actions is already full at a
+     250px card, and the chips row wraps. */
+  .chip.dl { cursor: pointer; color: var(--text); border-style: dashed; }
+  .chip.dl:hover { background: var(--panel2); }
+  .chip.dl.busy { border-style: solid; border-color: var(--accent2); color: var(--accent2); }
+  .chip.dl.done { border-style: solid; background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .chip.dl.error { border-style: solid; border-color: var(--accent); color: var(--accent); }
+  /* Thin progress strip pinned under the thumbnail while a download runs. */
+  .dlprog { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.55); z-index: 2; }
+  .dlprog > i { display: block; height: 100%; width: 0%; background: var(--accent2); transition: width .3s; }
+  .dl-row { display: flex; align-items: center; gap: .7rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 8px; margin-bottom: .4rem; background: var(--panel); font-size: .85rem; max-width: 780px; }
+  .dl-row img { width: 84px; aspect-ratio: 16/9; object-fit: cover; border-radius: 5px; background: #000; cursor: pointer; }
+  .dl-row .dlt { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+  .dl-row .sub { color: var(--muted); font-size: .76rem; }
+  .dl-row .dlchips { flex: none; overflow: visible; margin-top: .25rem; max-width: 320px; }
+  .dl-row .dlchips .chip { font-size: .66rem; }
+  .dl-row .grow { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  .dl-row .st { font-size: .74rem; border-radius: 999px; padding: 1px 9px; border: 1px solid var(--border); color: var(--muted); }
+  .dl-row .st.done { border-color: var(--ok); color: var(--ok); }
+  .dl-row .st.error { border-color: var(--accent); color: var(--accent); }
+  .dl-row .st.downloading, .dl-row .st.queued { border-color: var(--accent2); color: var(--accent2); }
+  .warnbox { border: 1px solid var(--accent); border-radius: 8px; padding: .6rem .8rem; margin-bottom: 1rem; max-width: 780px; font-size: .83rem; line-height: 1.5; color: var(--text); }
+  .warnbox code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-family: ui-monospace, Consolas, monospace; }
+  #localPlayer { width: 100%; height: 100%; display: block; background: #000; }
+  /* #playerHost iframe sets display:block and outranks the UA's [hidden]
+     rule, so swapping players needs these to actually hide the other one. */
+  #playerHost iframe[hidden], #localPlayer[hidden] { display: none; }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--accent2); border-radius: 10px; padding: .6rem 1rem; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 80vw; }
   #toast.show { opacity: 1; }
   .empty { color: var(--muted); padding: 2rem; text-align: center; }
@@ -71,11 +216,12 @@
 </head>
 <body>
 <header>
-  <h1><span>&#9654;</span> Video Organizer</h1>
+  <h1><span>&#9654;</span> My Watch Log</h1>
   <form id="syncForm">
     <input id="syncUrl" placeholder="Paste a YouTube playlist / channel / video URL and press Enter" required>
     <button class="primary" type="submit">Sync</button>
   </form>
+  <button id="btnBulk" title="Paste many video links at once">Bulk add</button>
   <button id="btnEmbed" title="Compute embeddings for new videos (needs the [ml] extra)">Embed</button>
   <button id="btnAssign" title="Auto-assign themes to unthemed videos by embedding similarity">Auto-theme</button>
   <select id="themePick" title="Color theme">
@@ -83,26 +229,50 @@
     <option value="light">Light</option>
     <option value="mono">Black &amp; white</option>
   </select>
+  <div id="syncProgress" hidden>
+    <div class="barwrap"><div id="syncBar"></div></div>
+    <span id="syncLabel"></span>
+  </div>
 </header>
 
 <main>
   <nav>
     <h2>Themes</h2>
     <div id="themeList"></div>
+    <h2>Playlists</h2>
+    <div id="playlistList"></div>
+    <button id="btnNewPlaylist">+ new playlist</button>
   </nav>
   <section id="content">
     <div class="tabs">
       <button id="tabBrowse" class="active">Browse</button>
       <button id="tabRecommend">What should I watch?</button>
       <button id="tabReview">Review queue</button>
+      <button id="tabRules">Rules</button>
+      <button id="tabDownloads">Offline</button>
     </div>
 
     <div id="viewBrowse">
       <div class="toolbar">
+        <input type="text" id="searchBox" placeholder="search title, channel, description…">
+        <label>sort <select id="sortBy">
+          <option value="newest">newest</option>
+          <option value="oldest">oldest</option>
+          <option value="longest">longest</option>
+          <option value="shortest">shortest</option>
+          <option value="channel">channel</option>
+          <option value="added">recently added</option>
+          <option value="played">most watched</option>
+          <option value="replayed">recently watched</option>
+        </select></label>
         <label><input type="checkbox" id="unwatchedOnly" checked> unwatched only</label>
+        <label title="Videos that have no theme yet"><input type="checkbox" id="unthemedOnly"> no theme only</label>
+        <label title="Only videos saved on this machine — combine with a theme in the sidebar"><input type="checkbox" id="offlineOnly"> offline only</label>
+        <button id="btnSelect" class="selbtn" title="Pick several videos, then theme them all at once">Select</button>
         <span id="browseTitle"></span>
       </div>
       <div id="browseGrid" class="grid"></div>
+      <div id="browseSentinel" style="height:1px"></div>
     </div>
 
     <div id="viewRecommend" hidden>
@@ -117,16 +287,127 @@
     </div>
 
     <div id="viewReview" hidden>
-      <div class="toolbar"><span>Videos with no theme yet — click a suggestion to confirm, or type your own.</span></div>
+      <div class="toolbar">
+        <button id="btnSelectReview" class="selbtn" title="Pick several videos, then theme them all at once">Select</button>
+        <span>Videos with no theme yet — click a suggestion to confirm, or type your own. Or <b>Select</b> several and theme them together.</span>
+      </div>
       <div id="reviewGrid" class="grid"></div>
+    </div>
+
+    <div id="viewRules" hidden>
+      <div class="hint">
+        If a video's title, description, channel, or tags contain the expression, it gets the
+        theme. Mark a rule <b>exclusive</b> to make matching videos get <b>only</b> that theme
+        (all others are removed). Rules apply to newly synced videos automatically — click
+        "Re-theme existing videos" to also apply them to what's already in your library.
+        Re-theming also removes auto-assigned themes the current rules no longer justify;
+        themes you added by hand are never touched.
+      </div>
+      <div class="toolbar">
+        <form id="ruleForm">
+          <input type="text" id="rulePattern" placeholder="expression, e.g. lex fridman" required>
+          <span>&rarr;</span>
+          <input type="text" id="ruleTheme" list="themeNames" placeholder="theme" required>
+          <datalist id="themeNames"></datalist>
+          <label><input type="checkbox" id="ruleExclusive"> exclusive</label>
+          <button class="primary" type="submit">Add rule</button>
+        </form>
+        <button id="btnApplyRules" title="Re-run all rules over every video already in the library">Re-theme existing videos</button>
+      </div>
+      <div id="ruleSuggestions"></div>
+      <div id="rulesList"></div>
+    </div>
+
+    <div id="viewDownloads" hidden>
+      <div class="hint">
+        Saved copies live on this machine and play in the built-in player with no
+        network. Use the <b>save offline</b> button on any video card to add one.
+        Deleting a copy here frees the disk space but keeps the video in your library.
+      </div>
+      <div id="ffmpegWarn" class="warnbox" hidden></div>
+      <div class="toolbar">
+        <label>category <select id="dlTheme"><option value="">all</option></select></label>
+        <label>sort <select id="dlSort">
+          <option value="recent">recently saved</option>
+          <option value="played">most watched</option>
+          <option value="largest">largest file</option>
+          <option value="title">title</option>
+        </select></label>
+        <span id="dlUsage"></span>
+        <button id="btnDlFolder" title="Open the media folder in your file manager">Open folder</button>
+        <button id="btnDlRefresh">Refresh</button>
+      </div>
+      <div id="dlList"></div>
     </div>
   </section>
 </main>
+<div id="selBar" hidden>
+  <span id="selCount">0 selected</span>
+  <input id="selTheme" list="themeNames" placeholder="theme name">
+  <button class="primary" id="selAssign">Assign theme</button>
+  <button id="selDelete" title="Delete the selected videos from your library">Delete</button>
+  <button id="selAllVisible" title="Select every video currently shown">Select all</button>
+  <button id="selClear">Clear</button>
+</div>
+<div id="bulkModal" hidden>
+  <div id="bulkBox">
+    <div class="modalhead">
+      <span>Bulk add videos</span>
+      <button id="bulkClose" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="hint" style="margin: 0 .8rem .5rem;">
+      Paste video links — one per line, or separated by commas or spaces.
+      Markdown-wrapped links and bare video ids work too. Duplicates are added once.
+    </div>
+    <textarea id="bulkText" placeholder="https://youtu.be/...&#10;https://www.youtube.com/watch?v=...&#10;..."></textarea>
+    <div class="modalfoot"><button class="primary" id="bulkGo">Add videos</button></div>
+  </div>
+</div>
+<div id="playerModal" hidden>
+  <div id="playerBox">
+    <div id="playerHead">
+      <span id="playerTitle"></span>
+      <button id="playerClose" title="Close (Esc)">&times;</button>
+    </div>
+    <div id="playerHost">
+      <div id="ytplayer"></div>
+      <video id="localPlayer" controls playsinline hidden></video>
+      <div id="votePill" hidden>
+        <span id="vpLabel">How was it?</span>
+        <button class="vote-mini down" data-vote="-1" title="Not for me">&#128078;</button>
+        <button class="vote-mini up" data-vote="1" title="More like this">&#128077;</button>
+      </div>
+      <div id="rateCard">
+        <div id="rateInner">
+          <div class="rc-title" id="rateTitle">How was it?</div>
+          <div class="rc-sub" id="rateSub">Thumbs up or down before it ends</div>
+          <div id="rateVote">
+            <button class="vote-big down" data-vote="-1"><span>&#128078;</span>Not for me</button>
+            <button class="vote-big up" data-vote="1"><span>&#128077;</span>More like this</button>
+          </div>
+          <div id="nextUp" hidden>
+            <div class="nu-label">Up next</div>
+            <div class="nu-title" id="nextTitle"></div>
+          </div>
+          <div class="rc-actions">
+            <button id="rateNext" hidden>Play next &#9654;</button>
+            <button id="rateDismiss">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="playerActions">
+      <button id="playerWatched">mark watched</button>
+      <a id="playerYt" target="_blank" rel="noopener">open on YouTube &#8599;</a>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let themes = [], activeTheme = null;
+let playlists = [], activePlaylist = null;
 
 $("themePick").value = document.documentElement.dataset.theme;
 $("themePick").onchange = (e) => {
@@ -157,54 +438,735 @@ function fmtDur(s) {
            : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-function card(v, { score = null, suggestions = null } = {}) {
+function themeInput(chip, v) {
+  // swap the "+ theme" chip for an input that autocompletes existing themes;
+  // typing a new name creates the theme
+  const input = document.createElement("input");
+  input.className = "chipinput";
+  input.setAttribute("list", "themeNames");
+  input.placeholder = "theme name…";
+  chip.replaceWith(input);
+  input.focus();
+  let done = false;
+  const cancel = () => { done = true; input.replaceWith(chip); };
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    input.replaceWith(chip);
+    if (!name) return;
+    await api(`/videos/${v.id}/themes`, { method: "POST", body: JSON.stringify({ name }) });
+    toast(`Themed as ${name}`);
+    refreshCurrent();
+  };
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") cancel();
+  };
+  input.onblur = commit;  // clicking a datalist suggestion also lands here
+}
+
+// --- bulk selection: pick many cards, theme them in one call -------------
+let selecting = false;
+const picked = new Set();
+
+function updateSelBar() {
+  $("selCount").textContent = `${picked.size} selected`;
+  $("selBar").hidden = !selecting || picked.size === 0;
+}
+
+function togglePick(id, el) {
+  if (picked.has(id)) { picked.delete(id); el.classList.remove("picked"); }
+  else { picked.add(id); el.classList.add("picked"); }
+  updateSelBar();
+}
+
+function setSelecting(on) {
+  selecting = on;
+  document.body.classList.toggle("selecting", on);
+  document.querySelectorAll(".selbtn").forEach(b => {
+    b.classList.toggle("on", on);
+    b.textContent = on ? "Done selecting" : "Select";
+  });
+  if (!on) { picked.clear(); document.querySelectorAll(".card.picked").forEach(c => c.classList.remove("picked")); }
+  updateSelBar();
+}
+
+function card(v, extras = {}) {
+  const { score = null, suggestions = null, queue = null, playlist = null } = extras;
   const el = document.createElement("div");
-  el.className = "card";
+  el.className = "card" + (picked.has(v.id) ? " picked" : "");
+  el._video = v;
+  el._queue = queue;
+  el._extras = extras;  // kept so the card can be rebuilt in place (see updateCard)
+  // in selection mode a click anywhere on the card toggles the pick, instead
+  // of opening the player / hitting a button — capture so it runs first
+  el.addEventListener("click", (e) => {
+    if (!selecting) return;
+    e.preventDefault();
+    e.stopPropagation();
+    togglePick(v.id, el);
+  }, true);
   const watched = v.watch_status === "watched";
-  const stars = [1,2,3,4,5].map(n =>
-    `<span data-star="${n}" class="${v.rating >= n ? "on" : ""}">&#9733;</span>`).join("");
+  const vote = v.rating || 0;
+  const votes =
+    `<span data-vote="-1" class="${vote < 0 ? "on" : ""}" title="Not for me">&#128078;</span>` +
+    `<span data-vote="1" class="${vote > 0 ? "on" : ""}" title="More like this">&#128077;</span>`;
   el.innerHTML = `
     <div class="thumbwrap">
       ${v.thumbnail_url ? `<img loading="lazy" src="${v.thumbnail_url}" alt="">` : ""}
       ${v.duration_sec != null ? `<span class="dur">${fmtDur(v.duration_sec)}</span>` : ""}
       ${score != null ? `<span class="score">match ${(score * 100).toFixed(0)}%</span>` : ""}
-      ${watched ? `<span class="watchedmark">watched</span>` : ""}
+      ${playMarkHtml(v)}
+      ${dlMarkHtml(v)}
+      <div class="dlprog" hidden><i></i></div>
     </div>
     <div class="body">
       <a class="title" target="_blank" rel="noopener"
          href="https://www.youtube.com/watch?v=${v.id}">${v.title}</a>
       <div class="meta">${v.channel_title || ""}</div>
       <div class="chips">
-        ${(v.themes || []).map(t => `<span class="chip">${t}</span>`).join("")}
+        ${(v.themes || []).map(t => `<span class="chip" data-name="${t}">${t}<span class="x" title="Remove this theme">&times;</span></span>`).join("")}
         ${(suggestions || []).map(s =>
           `<span class="chip suggest" data-theme="${s.theme}" title="similarity ${s.score}">+ ${s.theme}</span>`).join("")}
-        ${suggestions ? `<span class="chip suggest" data-theme="__custom__">+ custom…</span>` : ""}
+        <span class="chip suggest" data-theme="__custom__">+ theme</span>
+        <span class="chip addlist" title="Add to a playlist">+ list</span>
+        <span class="chip dl"></span>
+        ${playlist && playlist.kind === "local"
+          ? `<span class="chip plrm" title="Remove from this playlist">&minus; list</span>` : ""}
       </div>
       <div class="actions">
-        <div class="stars">${stars}</div>
-        <button class="watchbtn">${watched ? "unwatch" : "mark watched"}</button>
+        <div class="vote">${votes}</div>
+        <div class="btns">
+          <button class="watchbtn">${watched ? "unwatch" : "mark watched"}</button>
+          <button class="carddel" title="Remove video from library">delete</button>
+        </div>
       </div>
     </div>`;
 
   el.querySelector(".watchbtn").onclick = async () => {
+    const status = watched ? "unwatched" : "watched";
     await api(`/videos/${v.id}/watch-state`, { method: "PATCH",
-      body: JSON.stringify({ status: watched ? "unwatched" : "watched" }) });
-    refreshCurrent();
+      body: JSON.stringify({ status }) });
+    v.watch_status = status;
+    updateCard(el, v);  // rebuild this card only — keeps your scroll position
   };
-  el.querySelectorAll(".stars span").forEach(s => s.onclick = async () => {
+  el.querySelectorAll(".vote span").forEach(s => s.onclick = async () => {
+    // tapping the thumb you already gave takes it back, leaving it watched
+    // with no vote — which is how "it was okay" is stored
+    const rating = +s.dataset.vote === (v.rating || 0) ? 0 : +s.dataset.vote;
     await api(`/videos/${v.id}/watch-state`, { method: "PATCH",
-      body: JSON.stringify({ rating: +s.dataset.star, status: "watched" }) });
-    refreshCurrent();
+      body: JSON.stringify({ rating, status: "watched" }) });
+    v.rating = rating || null; v.watch_status = "watched";
+    updateCard(el, v);
   });
   el.querySelectorAll(".chip.suggest").forEach(c => c.onclick = async () => {
-    let name = c.dataset.theme;
-    if (name === "__custom__") { name = prompt("Theme name:"); if (!name) return; }
+    const name = c.dataset.theme;
+    if (name === "__custom__") { themeInput(c, v); return; }
     await api(`/videos/${v.id}/themes`, { method: "POST", body: JSON.stringify({ name }) });
     toast(`Themed as ${name}`);
-    loadThemes(); loadReview();
+    refreshCurrent();
   });
+  el.querySelectorAll(".chip:not(.suggest) .x").forEach(x => x.onclick = async () => {
+    const name = x.parentElement.dataset.name;
+    await api(`/videos/${v.id}/themes/${encodeURIComponent(name)}`, { method: "DELETE" });
+    toast(`Removed theme ${name}`);
+    refreshCurrent();
+  });
+  el.querySelector(".carddel").onclick = async () => {
+    await api(`/videos/${v.id}`, { method: "DELETE" });
+    toast(`Removed: ${v.title}`);
+    refreshCurrent();
+  };
+  el.addEventListener("mousedown", () => {
+    const grid = activeGrid();
+    if (grid && grid.contains(el)) selectCard(gridCards(grid).indexOf(el));
+  });
+  el.querySelector(".thumbwrap").onclick = () => {
+    openPlayer(v, queue ? { list: queue, idx: queue.findIndex(q => q.id === v.id) } : null);
+  };
+  el.querySelector(".chip.addlist").onclick = (e) => {
+    const items = playlists.filter(p => p.kind === "local")
+      .map(p => ({ label: p.title || p.id, onclick: () => addToPlaylist(p, v) }));
+    items.push({ label: "+ new playlist…", onclick: async () => {
+      const title = prompt("Playlist name:");
+      if (!title || !title.trim()) return;
+      const p = await api("/playlists", { method: "POST",
+        body: JSON.stringify({ title: title.trim() }) });
+      addToPlaylist(p, v);
+    }});
+    showMenu(items, e.clientX, e.clientY);
+  };
+  const plrm = el.querySelector(".chip.plrm");
+  if (plrm) plrm.onclick = async () => {
+    await api(`/playlists/${encodeURIComponent(playlist.id)}/videos/${v.id}`, { method: "DELETE" });
+    toast(`Removed from ${playlist.title || playlist.id}`);
+    refreshCurrent();
+  };
+  paintDl(el);
+  el.querySelector(".chip.dl").onclick = (e) => dlMenu(el, e);
   return el;
 }
+
+// --- offline copies -------------------------------------------------------
+// Downloads run in the background on the server, so the page polls /downloads
+// while anything is in flight and repaints just the affected cards — a full
+// grid reload every second would throw away your scroll position.
+
+let dlCaps = null;              // ffmpeg availability + quality choices
+let dlLive = new Map();         // video_id -> latest row from /downloads
+let dlTimer = null;
+
+// One badge in the bottom-left corner. A replay count says strictly more than
+// "watched" does, so once there is one it takes the slot.
+function playMarkHtml(v) {
+  const plays = v.play_count || 0;
+  const watched = v.watch_status === "watched";
+  if (plays > 1) {
+    return `<span class="${watched ? "watchedmark" : "playmark"}"
+      title="Played ${plays} times">&#9654; ${plays}&times;</span>`;
+  }
+  if (watched) return `<span class="watchedmark">watched</span>`;
+  if (plays === 1) return `<span class="playmark" title="Played once">&#9654; 1&times;</span>`;
+  return "";
+}
+
+// Repaint just the corner badge after a play is counted, so the number moves
+// while you watch instead of waiting for the next grid load.
+function repaintPlayMark(videoId) {
+  document.querySelectorAll(".card").forEach(el => {
+    if (!el._video || el._video.id !== videoId) return;
+    const wrap = el.querySelector(".thumbwrap");
+    wrap.querySelectorAll(".watchedmark, .playmark").forEach(m => m.remove());
+    wrap.insertAdjacentHTML("beforeend", playMarkHtml(el._video));
+  });
+}
+
+function dlDone(v) { return v.download_status === "done" && v.download_file; }
+function dlBusy(v) { return v.download_status === "queued" || v.download_status === "downloading"; }
+
+function dlMarkHtml(v) {
+  if (!dlDone(v)) return "";
+  const audio = v.download_file.endsWith(".m4a");
+  return `<span class="dlmark${audio ? " audio" : ""}">${audio ? "audio" : "offline"}</span>`;
+}
+
+function fmtBytes(n) {
+  if (!n) return "0 MB";
+  const mb = n / 1048576;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(0)} MB`;
+}
+
+// Percent is only meaningful once yt-dlp knows the stream size; until then the
+// row shows the stage instead of a fake number.
+function dlPercent(row) {
+  const p = row && row.progress;
+  if (!p || !p.total) return null;
+  return Math.min(99, Math.round((p.done / p.total) * 100));
+}
+
+function paintDl(el) {
+  const v = el._video;
+  const chip = el.querySelector(".chip.dl");
+  if (!chip) return;
+  const bar = el.querySelector(".dlprog");
+  const row = dlLive.get(v.id);
+  chip.classList.remove("busy", "done", "error");
+  bar.hidden = true;
+  if (dlDone(v)) {
+    chip.classList.add("done");
+    chip.textContent = "▣ offline";
+    chip.title = "Saved on this machine — click for options";
+  } else if (dlBusy(v)) {
+    const pct = dlPercent(row);
+    chip.classList.add("busy");
+    chip.textContent = pct == null ? "⬇ starting…" : `⬇ ${pct}%`;
+    chip.title = "Downloading — click to cancel is not supported yet; it will finish in the background";
+    if (pct != null) {
+      bar.hidden = false;
+      bar.firstElementChild.style.width = `${pct}%`;
+    }
+  } else if (v.download_status === "error") {
+    chip.classList.add("error");
+    chip.textContent = "⚠ failed";
+    chip.title = (row && row.error) || "Download failed — click to retry";
+  } else {
+    chip.textContent = "⬇ offline";
+    chip.title = "Save a copy on this machine to watch without a connection";
+  }
+  el.querySelector(".thumbwrap").querySelectorAll(".dlmark").forEach(m => m.remove());
+  if (dlDone(v)) {
+    el.querySelector(".thumbwrap").insertAdjacentHTML("beforeend", dlMarkHtml(v));
+  }
+}
+
+async function loadDlCaps() {
+  if (dlCaps) return dlCaps;
+  const data = await api("/downloads");
+  applyDlPayload(data);
+  return dlCaps;
+}
+
+function applyDlPayload(data) {
+  dlCaps = {
+    ffmpeg: data.ffmpeg,
+    choices: data.quality_choices,
+    def: data.default_height,
+    max: data.max_height,
+    usage: data.usage,
+  };
+  dlLive = new Map(data.downloads.map(r => [r.video_id, r]));
+  return data;
+}
+
+// Repaint every card on screen whose download state changed, without touching
+// the rest of the grid.
+function syncCardsFromDl() {
+  let anyActive = false;
+  document.querySelectorAll(".card").forEach(el => {
+    const v = el._video;
+    if (!v) return;
+    const row = dlLive.get(v.id);
+    const status = row ? row.status : null;
+    const file = row ? row.filename : null;
+    if (v.download_status !== status || v.download_file !== file) {
+      v.download_status = status;
+      v.download_file = file;
+    }
+    paintDl(el);
+  });
+  for (const row of dlLive.values()) {
+    if (row.status === "queued" || row.status === "downloading") anyActive = true;
+  }
+  return anyActive;
+}
+
+function ensureDlPolling() {
+  if (dlTimer) return;
+  dlTimer = setInterval(async () => {
+    const before = new Map([...dlLive].map(([id, r]) => [id, r.status]));
+    try {
+      applyDlPayload(await api("/downloads"));
+    } catch { return; }
+    announceDlChanges(before);
+    const active = syncCardsFromDl();
+    if (currentTab === "Downloads") renderDownloads();
+    if (!active) { clearInterval(dlTimer); dlTimer = null; }
+  }, 1500);
+}
+
+// Downloads finish while you're looking at something else, so the outcome has
+// to come to you. The awkward case is a failed *re*-download: the row goes
+// back to 'done' pointing at the copy you already had, which would otherwise
+// look like nothing happened at all.
+function announceDlChanges(before) {
+  for (const row of dlLive.values()) {
+    const was = before.get(row.video_id);
+    if (!was || was === row.status) continue;
+    if (row.status === "error") {
+      toast(`Download failed: ${row.error || "unknown error"}`, 6000);
+    } else if (row.status === "done" && row.error) {
+      toast(`Kept your existing ${dlHave(row)} copy — the new one failed: ${row.error}`, 7000);
+    } else if (row.status === "done") {
+      toast(`Saved offline (${dlHave(row)}): ${row.title}`);
+    }
+  }
+}
+
+async function startDownload(v, opts = {}) {
+  try {
+    await api(`/videos/${v.id}/download`, {
+      method: "POST", body: JSON.stringify(opts),
+    });
+  } catch (e) { toast(`Download failed to start: ${e.message}`); return; }
+  v.download_status = "queued";
+  v.download_file = null;
+  document.querySelectorAll(".card").forEach(el => {
+    if (el._video && el._video.id === v.id) { el._video.download_status = "queued"; paintDl(el); }
+  });
+  const label = opts.audio_only ? "audio"
+    : opts.best ? "best available" : `up to ${opts.max_height || dlCaps.def}p`;
+  toast(`Downloading ${label}: ${v.title}`);
+  ensureDlPolling();
+}
+
+async function removeDownload(v) {
+  try {
+    await api(`/videos/${v.id}/download`, { method: "DELETE" });
+  } catch (e) { toast(e.message); return; }
+  v.download_status = null;
+  v.download_file = null;
+  dlLive.delete(v.id);
+  document.querySelectorAll(".card").forEach(el => {
+    if (el._video && el._video.id === v.id) {
+      el._video.download_status = null; el._video.download_file = null; paintDl(el);
+    }
+  });
+  toast("Local copy deleted");
+  if (currentTab === "Downloads") loadDownloads();
+}
+
+// Heights ffmpeg can't currently deliver are still listed, but labelled, so
+// the limitation shows up at the moment of choosing rather than afterwards in
+// the form of a surprisingly small file.
+function qualityItems(v, again = false) {
+  // "Best available" first: the fixed heights are ceilings, so on a video
+  // that tops out at 720p every one of them lands in the same place. This is
+  // the only entry that says "whatever this particular video has".
+  const items = [{
+    label: (again ? "Re-download at best available" : "Best available")
+      + (dlCaps.ffmpeg ? "" : `  — needs ffmpeg (${dlCaps.max}p without it)`),
+    onclick: () => startDownload(v, { best: true }),
+  }];
+  dlCaps.choices.forEach(h => {
+    const name = { 2160: "4K", 1440: "2K" }[h];
+    const label = `${name ? name + " · " : ""}up to ${h}p`;
+    items.push({
+      label: (again ? `Re-download at ${label}` : label)
+        + (h === dlCaps.def && !again ? "  (default)" : "")
+        + (h > dlCaps.max ? "  — needs ffmpeg" : ""),
+      onclick: () => startDownload(v, { max_height: h }),
+    });
+  });
+  items.push({
+    label: again ? "Re-download as audio only" : "Audio only (m4a)",
+    onclick: () => startDownload(v, { audio_only: true }),
+  });
+  return items;
+}
+
+// What a stored copy actually is, which is often below what was asked for —
+// YouTube simply may not have a taller stream for that video.
+function dlHave(row) {
+  if (!row) return "";
+  if (row.audio_only) return "audio";
+  return row.height ? `${row.height}p` : "video";
+}
+
+async function dlMenu(el, e) {
+  const v = el._video;
+  await loadDlCaps();
+  const items = [];
+  if (dlDone(v)) {
+    const row = dlLive.get(v.id);
+    items.push({ label: `Play offline copy (${dlHave(row)})`, onclick: () => openPlayer(v, el._queue
+      ? { list: el._queue, idx: el._queue.findIndex(q => q.id === v.id) } : null) });
+    items.push({ label: "Show in folder", onclick: () => revealDownload(v.id) });
+    items.push({ label: `Delete local copy (${fmtBytes(row && row.size_bytes)})`,
+      onclick: () => removeDownload(v) });
+    if (row && row.error) {
+      items.push({ label: `⚠ Last attempt failed: ${row.error.slice(0, 60)}…`, onclick: () => {} });
+    }
+    // Getting a lower quality than you wanted is the normal reason to come
+    // back to this menu, so re-downloading has to be reachable from here.
+    items.push(...qualityItems(v, true));
+  } else if (dlBusy(v)) {
+    items.push({ label: "Downloading in the background…", onclick: () => {} });
+  } else {
+    items.push(...qualityItems(v));
+    if (v.download_status === "error") {
+      const row = dlLive.get(v.id);
+      if (row && row.error) items.push({ label: `Last error: ${row.error.slice(0, 60)}…`, onclick: () => {} });
+    }
+  }
+  showMenu(items, e.clientX, e.clientY);
+}
+
+// --- embedded player ---------------------------------------------------
+let ytApiPromise = null, ytPlayer = null, playingVideo = null, playQueue = null;
+let rateTimer = null, countdownTimer = null, pillTimer = null;
+let pillShown = false, doneMode = false;
+let localMode = false;   // true while a downloaded file is playing from disk
+
+function loadYtApi() {
+  if (!ytApiPromise) ytApiPromise = new Promise(resolve => {
+    window.onYouTubeIframeAPIReady = () => resolve(window.YT);
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(s);
+  });
+  return ytApiPromise;
+}
+
+async function markWatched(video) {
+  await api(`/videos/${video.id}/watch-state`, { method: "PATCH",
+    body: JSON.stringify({ status: "watched" }) });
+  toast(`Marked watched: ${video.title}`);
+  refreshCurrent();
+}
+
+// --- voting: a corner pill while it plays, a panel once it's over ---------
+function hasNextInQueue() {
+  return !!(playQueue && playQueue.list[playQueue.idx + 1]);
+}
+
+function voteLabel(n) {
+  return n > 0 ? "More like this" : n < 0 ? "Not for me" : "";
+}
+
+// Records the vote without touching playback — the video keeps running, which
+// is the whole point of asking early rather than after the fact.
+async function saveVote(n) {
+  const v = playingVideo;
+  if (!v) return;
+  v.rating = n || null; v.watch_status = "watched";
+  await api(`/videos/${v.id}/watch-state`, { method: "PATCH",
+    body: JSON.stringify({ rating: n, status: "watched" }) });
+  refreshCurrent();
+}
+
+// --- the pill (video still playing) ---
+function paintPill(n) {
+  $("votePill").querySelectorAll(".vote-mini").forEach(b =>
+    b.classList.toggle("on", n !== 0 && +b.dataset.vote === n));
+  $("vpLabel").textContent = n ? voteLabel(n) : "How was it?";
+}
+
+function showVotePill() {
+  if (!playingVideo || pillShown || doneMode) return;
+  pillShown = true;
+  paintPill(playingVideo.rating || 0);
+  const pill = $("votePill");
+  pill.hidden = false;
+  void pill.offsetWidth;  // flush the hidden->flex change so the fade actually runs
+  pill.classList.add("show");
+  fadePillIn(7000);  // unanswered, it just leaves — no dismiss button to hunt for
+}
+
+function fadePillIn(ms) {
+  clearTimeout(pillTimer);
+  pillTimer = setTimeout(hideVotePill, ms);
+}
+
+function hideVotePill() {
+  clearTimeout(pillTimer);
+  const pill = $("votePill");
+  pill.classList.remove("show");
+  setTimeout(() => { pill.hidden = true; }, 300);  // after the fade
+}
+
+async function voteFromPill(n) {
+  if (!playingVideo) return;
+  if ((playingVideo.rating || 0) === n) n = 0;  // tap it again to take it back
+  paintPill(n);
+  fadePillIn(1200);  // acknowledge the tap, then get out of the way
+  await saveVote(n);
+}
+
+// --- the end panel (video over) ---
+function paintVote(n) {
+  [...$("rateVote").children].forEach(b =>
+    b.classList.toggle("on", n !== 0 && +b.dataset.vote === n));
+}
+
+async function voteFromCard(n) {
+  if (!playingVideo) return;
+  if ((playingVideo.rating || 0) === n) n = 0;
+  paintVote(n);
+  $("rateTitle").textContent = n ? "Thanks!" : "How was it?";
+  $("rateSub").textContent = voteLabel(n);
+  await saveVote(n);
+}
+
+// only reached once the video is actually over: the frame is spent, so we can
+// take it over to confirm the vote and offer the next video on a countdown
+function enterDoneMode() {
+  if (doneMode) return;
+  doneMode = true;
+  hideVotePill();
+  paintVote(playingVideo.rating || 0);
+  const next = hasNextInQueue() ? playQueue.list[playQueue.idx + 1] : null;
+  $("rateTitle").textContent = playingVideo.rating ? "Thanks!" : "How was it?";
+  if (playingVideo.rating) $("rateSub").textContent = voteLabel(playingVideo.rating);
+  else $("rateSub").textContent = next
+    ? "Vote, or skip to the next one" : "Skip the vote if it was just okay";
+  if (next) {
+    $("nextTitle").textContent = next.title;
+    $("nextUp").hidden = false;
+    $("rateNext").hidden = false;
+    startCountdown();
+  } else {
+    $("nextUp").hidden = true;
+    $("rateNext").hidden = true;
+  }
+  const card = $("rateCard");
+  card.classList.add("show");
+}
+
+function hideRateCard() {
+  $("rateCard").classList.remove("show");
+  $("nextUp").hidden = true;
+}
+
+// The vote pill only needs a duration and a position, and both the YouTube
+// iframe API and a <video> element can answer that — so the watcher below
+// talks to this shim instead of knowing which player is on screen.
+function playerClock() {
+  if (localMode) {
+    const el = $("localPlayer");
+    return { duration: el.duration || 0, current: el.currentTime || 0 };
+  }
+  if (!ytPlayer || !ytPlayer.getDuration) return null;
+  return { duration: ytPlayer.getDuration(), current: ytPlayer.getCurrentTime() };
+}
+
+function startRateWatch() {
+  stopRateWatch();
+  rateTimer = setInterval(() => {
+    if (pillShown || doneMode) return;
+    const clock = playerClock();
+    if (!clock || !clock.duration) return;
+    const remaining = clock.duration - clock.current;
+    const threshold = Math.min(12, Math.max(6, clock.duration * 0.08));
+    if (remaining <= threshold) showVotePill();
+  }, 1000);
+}
+function stopRateWatch() {
+  if (rateTimer) { clearInterval(rateTimer); rateTimer = null; }
+}
+
+function advanceQueue() {
+  if (hasNextInQueue()) {
+    playQueue.idx += 1;
+    openPlayer(playQueue.list[playQueue.idx], playQueue);
+  }
+}
+
+// once the video's done, auto-advance to the next on a short, cancelable countdown
+function startCountdown() {
+  stopCountdown();
+  let secs = 6;
+  const btn = $("rateNext");
+  btn.textContent = `Play next ▶ (${secs})`;
+  countdownTimer = setInterval(() => {
+    secs -= 1;
+    if (secs <= 0) { stopCountdown(); advanceQueue(); return; }
+    btn.textContent = `Play next ▶ (${secs})`;
+  }, 1000);
+}
+function stopCountdown() {
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+  $("rateNext").textContent = "Play next ▶";
+}
+
+function onVideoEnded() {
+  if (!playingVideo || doneMode) return;
+  // finishing a video still counts as watched — unless a vote already said so,
+  // in which case don't re-announce it over the panel that's coming up
+  if (playingVideo.watch_status !== "watched") markWatched(playingVideo);
+  enterDoneMode();
+}
+
+$("votePill").querySelectorAll(".vote-mini").forEach(b =>
+  b.onclick = () => voteFromPill(+b.dataset.vote));
+// reaching for the pill means you're deciding — don't fade out mid-reach
+$("votePill").onmouseenter = () => clearTimeout(pillTimer);
+$("votePill").onmouseleave = () => fadePillIn(2000);
+
+$("rateVote").querySelectorAll(".vote-big").forEach(b =>
+  b.onclick = () => { stopCountdown(); voteFromCard(+b.dataset.vote); });
+$("rateNext").onclick = () => { stopCountdown(); advanceQueue(); };
+$("rateDismiss").onclick = () => { stopCountdown(); closePlayer(); };
+// hovering the card means the user is deciding — cancel the auto-advance
+$("rateInner").onmouseenter = stopCountdown;
+
+// the "next in line" is the following card in whatever grid you played from,
+// unless an explicit queue (e.g. a playlist) was handed in
+function gridQueueFor(v) {
+  const grid = activeGrid();
+  if (!grid) return null;
+  const vids = gridCards(grid).map(c => c._video).filter(Boolean);
+  const idx = vids.findIndex(q => q && q.id === v.id);
+  return idx < 0 ? null : { list: vids, idx };
+}
+
+async function openPlayer(v, queue = null) {
+  playingVideo = v;
+  playQueue = queue || gridQueueFor(v);
+  pillShown = false; doneMode = false;
+  stopCountdown();
+  hideRateCard();
+  hideVotePill();
+  $("playerTitle").textContent = v.title;
+  $("playerYt").href = `https://www.youtube.com/watch?v=${v.id}`;
+  $("playerModal").hidden = false;
+  countPlay(v);
+  // A saved copy plays from disk — no network, no embed, and seeking works
+  // because /media answers Range requests.
+  if (dlDone(v)) { openLocalPlayer(v); return; }
+  stopLocalPlayer();
+  $("ytplayer").hidden = false;
+  const YT = await loadYtApi();
+  startRateWatch();
+  if (ytPlayer) { ytPlayer.loadVideoById(v.id); return; }
+  ytPlayer = new YT.Player("ytplayer", {
+    videoId: v.id,
+    playerVars: { autoplay: 1, origin: location.origin },
+    events: {
+      onStateChange: (e) => {
+        if (e.data === YT.PlayerState.ENDED) onVideoEnded();
+      },
+    },
+  });
+}
+
+// Counted per open, not per finish: a favourite is something you *reach for*
+// again, and half-rewatching a song still counts. Deliberately not awaited —
+// playback must never wait on bookkeeping.
+function countPlay(v) {
+  api(`/videos/${v.id}/play`, { method: "POST" })
+    .then(r => { v.play_count = r.play_count; repaintPlayMark(v.id); })
+    .catch(() => {});
+}
+
+function openLocalPlayer(v) {
+  localMode = true;
+  if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
+  $("ytplayer").hidden = true;
+  const el = $("localPlayer");
+  el.hidden = false;
+  el.src = `/media/${encodeURIComponent(v.download_file)}`;
+  el.onended = onVideoEnded;
+  // Browsers block unmuted autoplay in some configurations; the controls are
+  // right there, so a rejected promise is not worth surfacing.
+  el.play().catch(() => {});
+  startRateWatch();
+}
+
+function stopLocalPlayer() {
+  localMode = false;
+  const el = $("localPlayer");
+  el.pause();
+  el.onended = null;
+  // Dropping the source stops the browser buffering a file nobody is watching.
+  el.removeAttribute("src");
+  el.load();
+  el.hidden = true;
+}
+
+function closePlayer() {
+  $("playerModal").hidden = true;
+  if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+  stopLocalPlayer();
+  stopRateWatch();
+  stopCountdown();
+  hideRateCard();
+  hideVotePill();
+  doneMode = false;
+  playingVideo = null;
+  playQueue = null;
+}
+
+$("playerClose").onclick = closePlayer;
+$("playerModal").onclick = (e) => { if (e.target === $("playerModal")) closePlayer(); };
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("playerModal").hidden) { closePlayer(); e._closedModal = true; }
+  else if (!$("bulkModal").hidden) { $("bulkModal").hidden = true; e._closedModal = true; }
+  else if (selecting) { setSelecting(false); e._closedModal = true; }
+});
+$("playerWatched").onclick = () => { if (playingVideo) markWatched(playingVideo); };
 
 function renderGrid(target, videos, extras = (v) => ({})) {
   target.replaceChildren();
@@ -213,17 +1175,125 @@ function renderGrid(target, videos, extras = (v) => ({})) {
     return;
   }
   videos.forEach(v => target.appendChild(card(v, extras(v))));
+  // keep the keyboard selection in place across re-renders (e.g. after Delete)
+  if (target === activeGrid() && selIdx >= 0) selectCard(Math.min(selIdx, videos.length - 1));
 }
 
+// --- keyboard navigation over the grid ----------------------------------
+let selIdx = -1;
+
+function activeGrid() {
+  return { Browse: $("browseGrid"), Recommend: $("recGrid"), Review: $("reviewGrid") }[currentTab] || null;
+}
+
+function gridCards(grid) { return [...grid.querySelectorAll(".card")]; }
+
+function selectCard(idx) {
+  const grid = activeGrid();
+  if (!grid) return;
+  const cards = gridCards(grid);
+  cards.forEach(c => c.classList.remove("sel"));
+  if (idx < 0 || !cards.length) { selIdx = -1; return; }
+  selIdx = Math.max(0, Math.min(idx, cards.length - 1));
+  cards[selIdx].classList.add("sel");
+  cards[selIdx].scrollIntoView({ block: "nearest" });
+}
+
+// Rebuild one card in place after a watch-state / rating change, so the grid
+// keeps its scroll position instead of reloading from the top. In an
+// "unwatched only" browse view a now-watched video is dropped instead.
+function updateCard(oldEl, v) {
+  const grid = oldEl.parentElement;
+  if (!grid) return;
+  loadThemes();  // watch-state may have changed; keep sidebar counts in sync
+  const idx = gridCards(grid).indexOf(oldEl);
+  const wasSel = grid === activeGrid() && idx === selIdx;
+  if (grid === $("browseGrid") && $("unwatchedOnly").checked
+      && v.watch_status === "watched") {
+    oldEl.remove();
+    if (wasSel) selectCard(Math.min(idx, gridCards(grid).length - 1));
+    else if (grid === activeGrid() && idx > -1 && idx < selIdx) selIdx -= 1;
+    return;
+  }
+  oldEl.replaceWith(card(v, oldEl._extras || {}));
+  if (wasSel) selectCard(idx);
+}
+
+function gridColumns(cards) {
+  const top = cards[0].offsetTop;
+  let n = 0;
+  for (const c of cards) { if (c.offsetTop !== top) break; n++; }
+  return n || 1;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!$("playerModal").hidden) return;  // the player owns the keyboard while open
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  const grid = activeGrid();
+  if (!grid) return;
+  const cards = gridCards(grid);
+  if (!cards.length) return;
+  const moves = { ArrowLeft: -1, ArrowRight: 1,
+                  ArrowUp: -gridColumns(cards), ArrowDown: gridColumns(cards) };
+  if (e.key in moves) {
+    e.preventDefault();
+    selectCard(selIdx === -1 ? 0 : selIdx + moves[e.key]);
+  } else if (e.key === "Enter" && selIdx >= 0 && cards[selIdx]) {
+    e.preventDefault();
+    const el = cards[selIdx];
+    openPlayer(el._video, el._queue
+      ? { list: el._queue, idx: el._queue.findIndex(q => q.id === el._video.id) } : null);
+  } else if (e.key === "Delete" && selIdx >= 0 && cards[selIdx]) {
+    e.preventDefault();
+    const el = cards[selIdx];
+    api(`/videos/${el._video.id}`, { method: "DELETE" }).then(() => {
+      toast(`Removed: ${el._video.title}`);
+      refreshCurrent();
+    });
+  } else if (e.key === "Escape" && !e._closedModal) {
+    selectCard(-1);
+  }
+});
+
+function refreshSidebar() { loadThemes(); loadPlaylists(); }
+
 async function loadThemes() {
-  themes = (await api("/themes")).themes;
+  // Counts follow the "unwatched only" filter: on → each theme shows how many
+  // unwatched videos it holds (and "All videos" the unwatched total).
+  const unwatched = $("unwatchedOnly").checked;
+  const data = await api("/themes" + (unwatched ? "?watched=false" : ""));
+  themes = data.themes;
   const list = $("themeList");
   list.replaceChildren();
+  const all = document.createElement("div");
+  all.className = "theme-item" + (activeTheme === null && !activePlaylist ? " active" : "");
+  all.innerHTML = `<span>All videos</span><span class="n">${data.total_videos}</span>`;
+  all.onclick = () => { activeTheme = null; activePlaylist = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
+  list.appendChild(all);
   themes.forEach(t => {
     const el = document.createElement("div");
-    el.className = "theme-item" + (t.name === activeTheme ? " active" : "");
-    el.innerHTML = `<span>${t.name}</span><span class="n">${t.video_count}</span>`;
-    el.onclick = () => { activeTheme = t.name; showTab("Browse"); loadBrowse(); loadThemes(); };
+    el.className = "theme-item" + (t.name === activeTheme && !activePlaylist ? " active" : "");
+    el.innerHTML = `<span>${t.name}</span>
+      <span class="n">${t.video_count}<span class="tren" title="Rename theme (renaming onto an existing theme merges them)">&#9998;</span><span class="pldel" title="Delete theme">&times;</span></span>`;
+    el.onclick = () => { activeTheme = t.name; activePlaylist = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
+    el.querySelector(".tren").onclick = async (e) => {
+      e.stopPropagation();
+      const name = prompt("Rename theme (existing name = merge):", t.name);
+      if (!name || !name.trim() || name.trim() === t.name) return;
+      const r = await api(`/themes/${encodeURIComponent(t.name)}`, {
+        method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+      toast(r.result === "merged"
+        ? `Merged "${t.name}" into "${r.name}"` : `Renamed to "${r.name}"`);
+      if (activeTheme === t.name) activeTheme = r.name;
+      refreshCurrent();
+    };
+    el.querySelector(".pldel").onclick = async (e) => {
+      e.stopPropagation();
+      await api(`/themes/${encodeURIComponent(t.name)}`, { method: "DELETE" });
+      toast(`Theme deleted: ${t.name}`);
+      if (activeTheme === t.name) activeTheme = null;
+      refreshCurrent();
+    };
     list.appendChild(el);
   });
   const sel = $("recTheme");
@@ -231,19 +1301,140 @@ async function loadThemes() {
   sel.innerHTML = `<option value="">any</option>` +
     themes.map(t => `<option>${t.name}</option>`).join("");
   sel.value = cur;
+  $("themeNames").innerHTML = themes.map(t => `<option value="${t.name}">`).join("");
 }
 
-async function loadBrowse() {
-  if (!activeTheme) {
-    if (themes.length) activeTheme = themes[0].name;
-    else { $("browseGrid").innerHTML = `<div class="empty">No themes yet — sync something.</div>`; return; }
-  }
-  $("browseTitle").textContent = activeTheme;
-  const unwatched = $("unwatchedOnly").checked ? "&watched=false" : "";
-  const data = await api(`/themes/${encodeURIComponent(activeTheme)}/videos?limit=200${unwatched}`);
-  const withThemes = data.videos.map(v => ({ ...v, themes: v.themes || [activeTheme] }));
-  renderGrid($("browseGrid"), withThemes);
+let browseSeq = 0;
+async function loadPlaylists() {
+  playlists = (await api("/playlists")).playlists;
+  const list = $("playlistList");
+  list.replaceChildren();
+  playlists.forEach(p => {
+    const el = document.createElement("div");
+    el.className = "theme-item" + (activePlaylist && activePlaylist.id === p.id ? " active" : "");
+    el.innerHTML = `<span>${p.title || p.id}</span>
+      <span class="n">${p.video_count}<span class="pldel" title="Delete playlist">&times;</span></span>`;
+    el.onclick = () => { activePlaylist = p; showTab("Browse"); loadBrowse(); refreshSidebar(); };
+    el.querySelector(".pldel").onclick = async (e) => {
+      e.stopPropagation();
+      await api(`/playlists/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+      if (activePlaylist && activePlaylist.id === p.id) activePlaylist = null;
+      toast(`Playlist deleted: ${p.title || p.id}`);
+      refreshSidebar(); loadBrowse();
+    };
+    list.appendChild(el);
+  });
 }
+
+async function addToPlaylist(p, v) {
+  await api(`/playlists/${encodeURIComponent(p.id)}/videos`, {
+    method: "POST", body: JSON.stringify({ video_id: v.id }) });
+  toast(`Added to ${p.title || p.id}`);
+  loadPlaylists();
+}
+
+function closeMenu() {
+  const m = $("ctxMenu");
+  if (m) m.remove();
+  document.removeEventListener("click", closeMenu);
+}
+function showMenu(items, x, y) {
+  closeMenu();
+  const m = document.createElement("div");
+  m.id = "ctxMenu";
+  items.forEach(it => {
+    const o = document.createElement("div");
+    o.className = "mi";
+    o.textContent = it.label;
+    o.onclick = (e) => { e.stopPropagation(); closeMenu(); it.onclick(); };
+    m.appendChild(o);
+  });
+  m.style.left = Math.min(x, innerWidth - 200) + "px";
+  m.style.top = Math.min(y, innerHeight - items.length * 34 - 12) + "px";
+  document.body.appendChild(m);
+  setTimeout(() => document.addEventListener("click", closeMenu), 0);
+}
+
+const BROWSE_PAGE = 200;   // rows fetched per request; grid grows as you scroll
+let browsePager = null;    // { load } for the active filter, or null (no paging)
+
+async function loadBrowse() {
+  const seq = ++browseSeq;  // drop out-of-order responses (fast typing/clicking)
+  const unwatched = $("unwatchedOnly").checked;
+  const offline = $("offlineOnly").checked;
+  const grid = $("browseGrid");
+
+  if (activePlaylist) {
+    browsePager = null;  // playlists are bounded — fetched in one shot
+    $("browseTitle").textContent = `playlist: ${activePlaylist.title || activePlaylist.id}`;
+    const data = await api(`/playlists/${encodeURIComponent(activePlaylist.id)}/videos`);
+    if (seq !== browseSeq) return;
+    let vids = data.videos;
+    if (unwatched) vids = vids.filter(v => v.watch_status !== "watched");
+    if (offline) vids = vids.filter(v => v.download_status === "done");
+    renderGrid(grid, vids, () => ({ queue: vids, playlist: data.playlist }));
+    return;
+  }
+
+  let fetchPage, extras = () => ({});
+  if (activeTheme === null) {
+    const search = $("searchBox").value.trim();
+    $("browseTitle").textContent = search ? `results for “${search}”` : "All videos";
+    fetchPage = (offset) => {
+      const params = new URLSearchParams({ limit: BROWSE_PAGE, offset, sort: $("sortBy").value });
+      if (search) params.set("search", search);
+      if (unwatched) params.set("watched", "false");
+      if ($("unthemedOnly").checked) params.set("unthemed", "true");
+      if (offline) params.set("downloaded", "true");
+      return api(`/videos?${params}`).then(d => d.videos);
+    };
+  } else {
+    $("browseTitle").textContent = activeTheme + (offline ? " · offline" : "");
+    fetchPage = (offset) => {
+      const params = new URLSearchParams({ limit: BROWSE_PAGE, offset, sort: $("sortBy").value });
+      if (unwatched) params.set("watched", "false");
+      if (offline) params.set("downloaded", "true");
+      return api(`/themes/${encodeURIComponent(activeTheme)}/videos?${params}`)
+        .then(d => d.videos.map(v => ({ ...v, themes: v.themes || [activeTheme] })));
+    };
+  }
+
+  grid.replaceChildren();
+  browsePager = makePager(seq, fetchPage, grid, extras);
+  await browsePager.load();
+}
+
+// Appends a page at a time so the grid can hold thousands of videos without
+// a fixed cap. The bottom sentinel (IntersectionObserver below) asks for more.
+function makePager(seq, fetchPage, grid, extras) {
+  return {
+    offset: 0, loading: false, done: false,
+    async load() {
+      if (this.loading || this.done) return;
+      this.loading = true;
+      const vids = await fetchPage(this.offset);
+      this.loading = false;
+      if (seq !== browseSeq) return;  // filter changed while we were fetching
+      this.offset += vids.length;
+      if (vids.length < BROWSE_PAGE) this.done = true;
+      if (!vids.length && !grid.children.length) {
+        const q = $("searchBox").value.trim();
+        const msg = document.createElement("div");
+        msg.className = "empty";
+        msg.textContent = q
+          ? `No videos match “${q}”.`
+          : "Nothing here. Sync a playlist to get started.";
+        grid.replaceChildren(msg);
+        return;
+      }
+      vids.forEach(v => grid.appendChild(card(v, extras(v))));
+    },
+  };
+}
+
+new IntersectionObserver((entries) => {
+  if (entries[0].isIntersecting && browsePager) browsePager.load();
+}, { rootMargin: "600px" }).observe($("browseSentinel"));
 
 async function loadRecommendations() {
   const params = new URLSearchParams({ limit: $("recLimit").value || 12 });
@@ -251,7 +1442,8 @@ async function loadRecommendations() {
   if ($("recMinutes").value) params.set("max_duration", $("recMinutes").value * 60);
   const data = await api(`/recommendations?${params}`);
   $("recMode").textContent = data.mode === "profile"
-    ? "ranked by your taste profile" : "cold start: ranked by theme affinity — rate some videos!";
+    ? "ranked by your taste profile"
+    : "cold start: ranked by theme affinity — thumb a few videos up or down!";
   renderGrid($("recGrid"), data.recommendations, v => ({ score: v.score }));
 }
 
@@ -267,43 +1459,393 @@ async function loadReview() {
     grid.appendChild(card(item.video, { suggestions: item.suggestions })));
 }
 
-const views = { Browse: loadBrowse, Recommend: loadRecommendations, Review: loadReview };
+const dismissedSuggestions = new Set();  // channels the user waved off this session
+
+async function loadRuleSuggestions() {
+  const box = $("ruleSuggestions");
+  box.replaceChildren();
+  const { suggestions } = await api("/rules/suggestions");
+  const fresh = suggestions.filter(s => !dismissedSuggestions.has(s.channel));
+  if (!fresh.length) return;
+  const head = document.createElement("h3");
+  head.textContent = "Learned from your tags — approve to auto-theme future videos";
+  box.appendChild(head);
+  fresh.forEach(s => {
+    const el = document.createElement("div");
+    el.className = "sugg-row";
+    el.innerHTML = `
+      <span class="pat">${s.channel}</span><span>&rarr;</span><span>${s.theme}</span>
+      <span class="count">(${s.matched}/${s.total} of this channel's tagged videos)</span>
+      <span class="grow">
+        <button class="primary add">Add rule</button>
+        <button class="dismiss" title="Hide this suggestion for now">dismiss</button>
+      </span>`;
+    el.querySelector(".add").onclick = async () => {
+      await api("/rules", { method: "POST",
+        body: JSON.stringify({ pattern: s.pattern, theme: s.theme, exclusive: false }) });
+      const r = await api("/rules/apply", { method: "POST" });
+      toast(`Rule added: "${s.channel}" → ${s.theme}. Re-themed ${r.videos_scanned} videos (+${r.themes_added}).`);
+      refreshSidebar();
+      loadRules();
+    };
+    el.querySelector(".dismiss").onclick = () => {
+      dismissedSuggestions.add(s.channel);
+      el.remove();
+      if (!box.querySelector(".sugg-row")) box.replaceChildren();
+    };
+    box.appendChild(el);
+  });
+}
+
+async function loadRules() {
+  loadRuleSuggestions();
+  const data = await api("/rules");
+  const list = $("rulesList");
+  list.replaceChildren();
+  if (!data.rules.length) {
+    list.innerHTML = `<div class="empty">No rules yet — add an expression above.</div>`;
+    return;
+  }
+  data.rules.forEach(r => {
+    const el = document.createElement("div");
+    el.className = "rule-row";
+    el.innerHTML = `
+      <span class="pat">${r.pattern}</span><span>&rarr;</span><span>${r.theme_name}</span>
+      ${r.exclusive ? `<span class="excl">exclusive</span>` : ""}
+      <span class="del" title="Delete rule">&times;</span>`;
+    el.querySelector(".del").onclick = async () => {
+      await api(`/rules/${r.id}`, { method: "DELETE" });
+      toast("Rule deleted");
+      loadRules();
+    };
+    list.appendChild(el);
+  });
+}
+
+// --- offline copies view --------------------------------------------------
+
+async function loadDownloads() {
+  applyDlPayload(await api("/downloads"));
+  renderDownloads();
+  if ([...dlLive.values()].some(r => r.status === "queued" || r.status === "downloading")) {
+    ensureDlPolling();
+  }
+}
+
+function dlStatusLabel(row) {
+  if (row.status === "downloading" || row.status === "queued") {
+    const pct = dlPercent(row);
+    if (pct != null) return `${pct}%`;
+    return row.progress && row.progress.stage === "processing" ? "processing" : row.status;
+  }
+  // An error on a 'done' row means a re-download failed and this is the older
+  // copy that survived it — worth flagging, since the row otherwise looks fine.
+  if (row.status === "done" && row.error) return "done ⚠";
+  return row.status;
+}
+
+// The category list is built from what you actually have offline, so it never
+// offers a theme that would come back empty.
+function fillDlThemes(rows) {
+  const sel = $("dlTheme");
+  const names = [...new Set(rows.flatMap(r => r.themes || []))].sort(
+    (a, b) => a.localeCompare(b));
+  const current = sel.value;
+  sel.replaceChildren();
+  sel.appendChild(new Option("all", ""));
+  names.forEach(n => sel.appendChild(new Option(n, n)));
+  sel.value = names.includes(current) ? current : "";
+}
+
+function filterDlRows(rows) {
+  const theme = $("dlTheme").value;
+  return theme ? rows.filter(r => (r.themes || []).includes(theme)) : rows;
+}
+
+function sortDlRows(rows) {
+  const by = $("dlSort").value;
+  const copy = [...rows];
+  if (by === "played") {
+    // Ties on play count fall back to how recently you reached for it.
+    copy.sort((a, b) => (b.play_count || 0) - (a.play_count || 0)
+      || String(b.last_played_at || "").localeCompare(String(a.last_played_at || "")));
+  } else if (by === "largest") {
+    copy.sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
+  } else if (by === "title") {
+    copy.sort((a, b) => a.title.localeCompare(b.title));
+  }
+  return copy;  // "recent" is the order the API already returns
+}
+
+async function revealDownload(videoId) {
+  try {
+    await api("/downloads/reveal", {
+      method: "POST", body: JSON.stringify({ video_id: videoId || null }),
+    });
+  } catch (e) { toast(`Could not open the folder: ${e.message}`); }
+}
+
+function renderDownloads() {
+  const warn = $("ffmpegWarn");
+  if (dlCaps && !dlCaps.ffmpeg) {
+    warn.hidden = false;
+    warn.innerHTML = `<b>ffmpeg isn't installed</b>, so video downloads are capped at
+      ${dlCaps.max}p. YouTube serves anything taller as separate video and audio
+      streams, and ffmpeg is what merges them back together. Install it with
+      <code>winget install Gyan.FFmpeg</code> and restart Watchlog to unlock up to
+      ${Math.max(...dlCaps.choices)}p. Audio-only downloads work either way.`;
+  } else {
+    warn.hidden = true;
+  }
+  $("dlUsage").textContent = dlCaps
+    ? `${dlCaps.usage.files} file${dlCaps.usage.files === 1 ? "" : "s"} · ${fmtBytes(dlCaps.usage.bytes)} on disk`
+    : "";
+
+  const list = $("dlList");
+  const all = [...dlLive.values()];
+  fillDlThemes(all);
+  const rows = sortDlRows(filterDlRows(all));
+  list.replaceChildren();
+  if (!all.length) {
+    list.innerHTML = `<div class="empty">No offline copies yet — use the
+      <b>⬇ offline</b> chip on any video card.</div>`;
+    return;
+  }
+  if (!rows.length) {
+    list.innerHTML = `<div class="empty">Nothing saved offline in
+      “${$("dlTheme").value}”.</div>`;
+    return;
+  }
+  rows.forEach(row => {
+    const el = document.createElement("div");
+    el.className = "dl-row";
+    const quality = row.audio_only ? "audio only"
+      : (row.height ? `${row.height}p` : "video");
+    const plays = row.play_count || 0;
+    el.innerHTML = `
+      ${row.thumbnail_url ? `<img loading="lazy" src="${row.thumbnail_url}" alt="">` : ""}
+      <div>
+        <div class="dlt" title="${row.title}">${row.title}</div>
+        <div class="sub">${row.channel_title || ""} · ${quality}${
+          row.size_bytes ? " · " + fmtBytes(row.size_bytes) : ""}${
+          plays ? ` · watched ${plays}×` : ""}</div>
+        <div class="chips dlchips">${(row.themes || [])
+          .map(t => `<span class="chip">${t}</span>`).join("")}</div>
+      </div>
+      <div class="grow">
+        <span class="st ${row.status}">${dlStatusLabel(row)}</span>
+        ${row.status === "done" ? `<button class="dlplay">Play</button>` : ""}
+        ${row.status === "done" ? `<button class="dlshow" title="Show this file in your file manager">Show in folder</button>` : ""}
+        ${row.status === "error" ? `<button class="dlretry">Retry</button>` : ""}
+        <button class="dlrm">${row.status === "done" ? "Delete" : "Clear"}</button>
+      </div>`;
+    if (row.error) el.title = row.error;
+    const play = async () => {
+      const v = await api(`/videos/${row.video_id}`);
+      openPlayer(v);
+    };
+    const playBtn = el.querySelector(".dlplay");
+    if (playBtn) playBtn.onclick = play;
+    const showBtn = el.querySelector(".dlshow");
+    if (showBtn) showBtn.onclick = () => revealDownload(row.video_id);
+    const img = el.querySelector("img");
+    if (img && row.status === "done") img.onclick = play;
+    const retry = el.querySelector(".dlretry");
+    if (retry) retry.onclick = async () => {
+      const v = await api(`/videos/${row.video_id}`);
+      await startDownload(v, { audio_only: !!row.audio_only });
+      loadDownloads();
+    };
+    el.querySelector(".dlrm").onclick = async () => {
+      await removeDownload({ id: row.video_id });
+      loadDownloads();
+    };
+    list.appendChild(el);
+  });
+}
+
+const views = { Browse: loadBrowse, Recommend: loadRecommendations, Review: loadReview, Rules: loadRules, Downloads: loadDownloads };
 let currentTab = "Browse";
 function showTab(name) {
   currentTab = name;
-  for (const t of ["Browse", "Recommend", "Review"]) {
+  for (const t of ["Browse", "Recommend", "Review", "Rules", "Downloads"]) {
     $("view" + t).hidden = t !== name;
     $("tab" + t).classList.toggle("active", t === name);
   }
 }
-function refreshCurrent() { loadThemes(); views[currentTab](); }
+function refreshCurrent() { refreshSidebar(); views[currentTab](); }
 
 $("tabBrowse").onclick = () => { showTab("Browse"); loadBrowse(); };
 $("tabRecommend").onclick = () => { showTab("Recommend"); loadRecommendations(); };
 $("tabReview").onclick = () => { showTab("Review"); loadReview(); };
-$("unwatchedOnly").onchange = loadBrowse;
+$("tabRules").onclick = () => { showTab("Rules"); loadRules(); };
+$("tabDownloads").onclick = () => { showTab("Downloads"); loadDownloads(); };
+$("btnDlRefresh").onclick = loadDownloads;
+$("btnDlFolder").onclick = () => revealDownload(null);
+// Filtering and sorting are client-side: the offline list is small by design.
+$("dlTheme").onchange = renderDownloads;
+$("dlSort").onchange = renderDownloads;
+// Sidebar counts intentionally stay whole-library, so you can see how much of
+// a theme you have offline versus how much of it there is.
+$("offlineOnly").onchange = loadBrowse;
+$("unwatchedOnly").onchange = () => { loadBrowse(); loadThemes(); };
+$("unthemedOnly").onchange = () => {
+  // a theme view can't contain unthemed videos — widen to the whole library
+  if ($("unthemedOnly").checked && (activeTheme !== null || activePlaylist)) {
+    activeTheme = null; activePlaylist = null; refreshSidebar();
+  }
+  loadBrowse();
+};
+$("btnNewPlaylist").onclick = async () => {
+  const title = prompt("Playlist name:");
+  if (!title || !title.trim()) return;
+  const p = await api("/playlists", { method: "POST",
+    body: JSON.stringify({ title: title.trim() }) });
+  activePlaylist = p;
+  showTab("Browse"); loadBrowse(); refreshSidebar();
+  toast(`Playlist created: ${p.title}`);
+};
+$("sortBy").onchange = loadBrowse;
+$("searchBox").oninput = () => {
+  clearTimeout($("searchBox")._h);
+  $("searchBox")._h = setTimeout(() => {
+    // search always covers the whole library, not just the active theme/playlist
+    if (activeTheme !== null || activePlaylist) {
+      activeTheme = null; activePlaylist = null; refreshSidebar();
+    }
+    loadBrowse();
+  }, 250);
+};
 $("btnRecommend").onclick = loadRecommendations;
+
+$("ruleForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const pattern = $("rulePattern").value.trim();
+  const theme = $("ruleTheme").value.trim();
+  if (!pattern || !theme) return;
+  try {
+    await api("/rules", { method: "POST",
+      body: JSON.stringify({ pattern, theme, exclusive: $("ruleExclusive").checked }) });
+    $("rulePattern").value = ""; $("ruleTheme").value = ""; $("ruleExclusive").checked = false;
+    // apply retroactively so videos you already have get themed, not just future ones
+    const r = await api("/rules/apply", { method: "POST" });
+    toast(`Rule added: "${pattern}" → ${theme}. Re-themed ${r.videos_scanned} videos (+${r.themes_added}).`);
+    refreshSidebar();
+    loadRules();
+  } catch (err) { toast(err.message, 6000); }
+};
+
+$("btnApplyRules").onclick = async () => {
+  toast("Re-theming existing videos…", 30000);
+  try {
+    const r = await api("/rules/apply", { method: "POST" });
+    toast(`Scanned ${r.videos_scanned} videos: ${r.themes_added} themes added, ${r.themes_removed} removed`);
+    refreshCurrent();
+  } catch (err) { toast(err.message, 6000); }
+};
+
+function setSyncProgress(pct, label) {
+  $("syncProgress").hidden = false;
+  $("syncBar").style.width = Math.min(100, pct) + "%";
+  $("syncLabel").textContent = label;
+}
+
+function onSyncProgress(p) {
+  if (p.stage === "listing") setSyncProgress(4, "listing videos in source…");
+  else if (p.stage === "plan") setSyncProgress(8, p.new
+    ? `${p.new} new to fetch, ${p.known} already known`
+    : "everything already known");
+  else if (p.stage === "fetching") setSyncProgress(
+    8 + 87 * p.done / (p.total || 1), `fetching metadata ${p.done}/${p.total}`);
+  else if (p.stage === "storing") setSyncProgress(97, "saving to library…");
+}
+
+async function consumeNdjson(path, body) {
+  // read a {"progress"}/{"result"}/{"error"} ND-JSON stream, driving the bar
+  const res = await fetch(path, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok || !res.body) throw new Error(res.statusText || "request failed");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "", result = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const msg = JSON.parse(line);
+      if (msg.progress) onSyncProgress(msg.progress);
+      if (msg.error) throw new Error(msg.error);
+      if (msg.result) result = msg.result;
+    }
+  }
+  if (!result) throw new Error("stream ended unexpectedly");
+  return result;
+}
+
+function hideSyncProgressSoon() {
+  setTimeout(() => { $("syncProgress").hidden = true; $("syncBar").style.width = "0%"; }, 900);
+}
 
 $("syncForm").onsubmit = async (e) => {
   e.preventDefault();
   const url = $("syncUrl").value.trim();
   if (!url) return;
-  toast("Syncing… this can take a moment", 60000);
+  const btn = $("syncForm").querySelector("button");
+  btn.disabled = true;
+  setSyncProgress(2, "contacting YouTube…");
   try {
-    const r = await api("/sync", { method: "POST", body: JSON.stringify({ url }) });
-    toast(r.kind === "video"
-      ? `Added: ${r.video?.title || "1 video"}`
-      : `${r.title || r.playlist_id}: ${r.added} new, ${r.already_known} already known`);
+    const result = await consumeNdjson("/sync/stream", { url });
+    setSyncProgress(100, "done");
+    toast(result.kind === "video"
+      ? `Added: ${result.video?.title || "1 video"}`
+      : `${result.title || result.playlist_id}: ${result.added} new, ${result.already_known} already known`
+        + (result.unavailable ? `, ${result.unavailable} skipped (private/deleted)` : ""));
     $("syncUrl").value = "";
     refreshCurrent();
   } catch (err) { toast("Sync failed: " + err.message, 6000); }
+  finally {
+    btn.disabled = false;
+    hideSyncProgressSoon();
+  }
+};
+
+$("btnBulk").onclick = () => { $("bulkModal").hidden = false; $("bulkText").focus(); };
+$("bulkClose").onclick = () => { $("bulkModal").hidden = true; };
+$("bulkModal").onclick = (e) => { if (e.target === $("bulkModal")) $("bulkModal").hidden = true; };
+
+$("bulkGo").onclick = async () => {
+  const text = $("bulkText").value.trim();
+  if (!text) return;
+  $("bulkModal").hidden = true;
+  setSyncProgress(2, "reading the list…");
+  try {
+    const r = await consumeNdjson("/videos/bulk/stream", { text });
+    setSyncProgress(100, "done");
+    toast(`Bulk add: ${r.added} new, ${r.already_known} already known`
+      + (r.unavailable ? `, ${r.unavailable} unavailable` : "")
+      + (r.invalid.length ? `, ${r.invalid.length} not recognized` : ""), 6000);
+    $("bulkText").value = "";
+    refreshCurrent();
+  } catch (err) { toast("Bulk add failed: " + err.message, 6000); }
+  finally { hideSyncProgressSoon(); }
 };
 
 $("btnEmbed").onclick = async () => {
-  toast("Computing embeddings… (first run downloads the model)", 120000);
+  toast("Computing embeddings… (the model downloads once, then it's cached)", 120000);
   try {
-    const r = await api("/embeddings/build", { method: "POST" });
-    toast(`Embedded ${r.embedded_now} videos (${r.remaining} remaining)`);
+    let embedded = 0, r;
+    do {
+      r = await api("/embeddings/build", { method: "POST" });
+      embedded += r.embedded_now;
+      if (r.remaining > 0)
+        toast(`Embedded ${embedded} so far… (${r.remaining} remaining)`, 120000);
+    } while (r.embedded_now > 0 && r.remaining > 0);
+    toast(`Done — embedded ${embedded} videos (${r.remaining} remaining)`);
   } catch (err) { toast(err.message, 6000); }
 };
 
@@ -315,7 +1857,39 @@ $("btnAssign").onclick = async () => {
   } catch (err) { toast(err.message, 6000); }
 };
 
+document.querySelectorAll(".selbtn").forEach(b => b.onclick = () => setSelecting(!selecting));
+$("selClear").onclick = () => setSelecting(false);
+$("selAllVisible").onclick = () => {
+  gridCards(activeGrid() || $("browseGrid")).forEach(c => {
+    if (!picked.has(c._video.id)) { picked.add(c._video.id); c.classList.add("picked"); }
+  });
+  updateSelBar();
+};
+$("selAssign").onclick = async () => {
+  const name = $("selTheme").value.trim();
+  if (!name) { $("selTheme").focus(); return; }
+  if (!picked.size) return;
+  const ids = [...picked];
+  const r = await api("/videos/themes/bulk", { method: "POST",
+    body: JSON.stringify({ video_ids: ids, name }) });
+  toast(`Themed ${r.assigned} videos as "${r.name}"`);
+  $("selTheme").value = "";
+  setSelecting(false);
+  refreshCurrent();
+};
+$("selTheme").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("selAssign").click(); } };
+$("selDelete").onclick = async () => {
+  if (!picked.size) return;
+  const ids = [...picked];
+  if (!confirm(`Delete ${ids.length} video${ids.length > 1 ? "s" : ""} from your library? This can't be undone.`)) return;
+  const r = await api("/videos/bulk/delete", { method: "POST", body: JSON.stringify({ video_ids: ids }) });
+  toast(`Deleted ${r.deleted} video${r.deleted !== 1 ? "s" : ""}`);
+  setSelecting(false);
+  refreshCurrent();
+};
+
 loadThemes().then(loadBrowse);
+loadPlaylists();
 </script>
 </body>
 </html>

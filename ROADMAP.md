@@ -1,6 +1,6 @@
 # Roadmap
 
-Local-first YouTube video organizer: playlist sync, ML theming, content-based
+Watchlog — local-first YouTube backlog organizer: playlist sync, ML theming, content-based
 recommendations. One SQLite file, no cloud dependency beyond YouTube.
 
 ## Design constraints
@@ -16,7 +16,7 @@ recommendations. One SQLite file, no cloud dependency beyond YouTube.
 - **Identity:** the 11-char YouTube video id is the primary key. URL variants
   (youtu.be, watch?v=, shorts) canonicalize to the same video.
 - **Recommendations are content-based.** Collaborative filtering needs many
-  users; a solo user has none. Watch state + ratings tracked in-app are the
+  users; a solo user has none. Watch state + thumbs tracked in-app are the
   feedback signal (YouTube won't expose watch history via API).
 
 ## Phase 0 — Foundation ✅
@@ -50,16 +50,16 @@ clusters with sklearn HDBSCAN and proposes labeled clusters (confirm with
 `POST /themes`).
 
 ## Phase 3 — Recommendation ✅
-`app/recommend/engine.py`: profile vector = rating- and recency-weighted mean
-of watched-video embeddings (rating 1 → −0.6 … 5 → +1.0, skipped −0.3,
-180-day half-life); unwatched candidates ranked by cosine blended with a
+`app/recommend/engine.py`: profile vector = vote- and recency-weighted mean
+of watched-video embeddings (thumbs up +1.0, thumbs down −0.6, skipped −0.3,
+watched-but-unvoted +0.2, 180-day half-life); unwatched candidates ranked by cosine blended with a
 recency boost, then MMR re-ranked (redundancy⁴ penalty so near-duplicates pay
 full price while related videos pass). Cold start without embeddings falls
 back to theme-affinity counts. `GET /recommendations?theme=&max_duration=&limit=`.
 
 ## Phase 4 — Frontend ✅
 `static/index.html` (vanilla JS, no build step) served at `/`: sync box,
-theme sidebar, video cards with watch/rate stars, "What should I watch?" feed
+theme sidebar, video cards with watch/thumbs buttons, "What should I watch?" feed
 with time-budget filter, review queue with one-click theme confirmation,
 Embed/Auto-theme maintenance buttons.
 

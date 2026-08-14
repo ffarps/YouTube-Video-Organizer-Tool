@@ -4,8 +4,33 @@
     {
       "name": "organizer",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--port", "8000"],
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "app"
+      ],
       "port": 8000
+    },
+    {
+      "name": "organizer-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8765"
+      ],
+      "port": 8765,
+      "env": {
+        "DATABASE_PATH": "preview.db",
+        "MEDIA_PATH": "media_preview"
+      }
     }
   ]
 }

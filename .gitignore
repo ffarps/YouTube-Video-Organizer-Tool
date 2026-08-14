@@ -6,6 +6,10 @@ playlist_*.json
 *.db
 *.db-wal
 *.db-shm
+# every dated backup copy, not just the ones that exist today
+*.db.bak*
+media/
+media_preview/
 
 # Secrets
 .env
@@ -17,3 +21,6 @@ __pycache__/
 myenv/
 *.egg-info/
 .pytest_cache/
+
+# Console-less runs log here instead of to a terminal
+watchlog-desktop.log
