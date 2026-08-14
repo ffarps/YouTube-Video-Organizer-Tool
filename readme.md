@@ -255,15 +255,37 @@ See [ROADMAP.md](ROADMAP.md) for the design constraints behind all this (the
 API quota arithmetic, why Watch Later needs yt-dlp, why recommendations are
 content-based) and what is still on the list.
 
-## Version 2
+## What the first version was
 
-Everything above is a rewrite. The first version of this repository was a
-FastAPI service that appended video metadata to a `videos.json` file under
-manually chosen categories, and did nothing else with it. Version 2 replaced
-the JSON file with SQLite, added hybrid Data API + yt-dlp ingestion, automatic
-theming, recommendations, offline copies and a UI. The old entry point is still
-in the tree as `main.py` at the repository root; nothing imports it, and
-`scripts/migrate_videos_json.py` exists to move data out of it.
+Everything above is a rewrite. Before version 2 this repository was a single
+`main.py`: a FastAPI service with no interface of its own, used from `/docs` or
+curl, storing everything in a `videos.json` file at the repository root — one
+dictionary of category name to a list of videos.
+
+It could:
+
+- add a video to a category by hand, or fetch its metadata with yt-dlp:
+  title, channel, duration, thumbnail, view count, upload date
+- expand a whole playlist into a category in one call
+- list categories and their videos, update or delete a video, and toggle a
+  watched flag, all addressed by URL string
+- dump a playlist to its own `playlist_<uuid>.json` file, and import one back
+  into a category
+
+That was all of it. Categories were whatever you typed when adding the video,
+so nothing was sorted for you. A video's identity was the exact URL string, so
+the same video added once as `youtu.be/...` and once as `watch?v=...` counted
+as two, in one category or across several. And once a video was in the file
+there was nothing to do with it: no search, no themes, no recommendations, no
+player, no offline copies, and no watch tracking beyond a boolean.
+
+Version 2 kept the idea and replaced the implementation. SQLite instead of a
+JSON file, the 11-character YouTube id instead of the URL, hybrid Data API +
+yt-dlp ingestion, themes assigned automatically, recommendations from your own
+votes, offline copies, and a UI to use it all from.
+`scripts/migrate_videos_json.py` carries an old `videos.json` across, merging
+the URL-variant duplicates it collected along the way. The old entry point is
+still in the tree as `main.py` at the repository root; nothing imports it.
 
 ## License
 
