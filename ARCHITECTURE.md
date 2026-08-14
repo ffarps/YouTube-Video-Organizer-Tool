@@ -117,7 +117,18 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   runs). `capture_std_streams` swaps `sys.stdout`/`stderr` for line-buffered
   log adapters when they are None under `pythonw`. Uvicorn is started with
   `log_config=None` so its loggers propagate here instead of onto a stdout
-  that doesn't exist.
+  that doesn't exist. `dump_stacks` walks `sys._current_frames()` rather than
+  using `faulthandler.dump_traceback`, which needs a real fd and so can't be
+  captured into a string.
+- Freeze diagnosis: a hang raises nothing, so `desktop._start_watchdog` polls
+  `IsHungAppWindow` (what puts "(Not Responding)" in a title bar) every 10s
+  and dumps every thread's stack the moment the window stops answering, plus
+  a heartbeat line every 5 minutes so a gap in the log dates the freeze.
+  `GET /diagnostics/stacks` is the same dump on demand — the server thread
+  keeps answering when the UI doesn't, which is what makes it reachable from
+  outside a frozen app. Access logging is on in the window for the same
+  reason: the last few request lines say what the page was doing when it
+  stopped.
 - `app/desktop.py` — the desktop shell, and the only entry point that owns a
   window. Uvicorn goes on a daemon thread (that's supported: uvicorn skips
   its signal handlers off the main thread) and the GUI keeps the main

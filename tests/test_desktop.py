@@ -113,3 +113,25 @@ def test_server_thread_serves_then_stops(tmp_path, monkeypatch):
         get_settings.cache_clear()
 
     assert not thread.is_alive()
+
+
+def test_diagnostics_stacks_answers_while_the_ui_is_frozen(tmp_path, monkeypatch):
+    """The point of the endpoint: reachable from outside when the window isn't."""
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "desktop.db"))
+    monkeypatch.setenv("MEDIA_PATH", str(tmp_path / "media"))
+    get_settings.cache_clear()
+
+    port = _free_port()
+    server, thread = desktop._start_server(port)
+    try:
+        desktop._wait_until_serving(server, thread, timeout=30)
+        url = f"http://127.0.0.1:{port}/diagnostics/stacks"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            body = resp.read().decode("utf-8", "replace")
+        assert resp.status == 200
+        assert "thread stacks" in body
+        assert "watchlog-server" in body  # the server thread names itself
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        get_settings.cache_clear()

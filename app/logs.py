@@ -18,6 +18,7 @@ import logging
 import logging.handlers
 import sys
 import threading
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -104,6 +105,29 @@ def _install_hooks(log_dir: Path) -> None:
             faulthandler.enable(_crash_file)
         except OSError:  # logging must never be the reason the app won't start
             _crash_file = None
+
+
+def dump_stacks(reason: str) -> str:
+    """Write every thread's stack to the log and return it.
+
+    For a freeze rather than a crash: nothing has raised, so there is no
+    traceback anywhere — the only question worth answering is what each thread
+    is currently sitting on. `faulthandler.dump_traceback` needs a real file
+    descriptor, which rules out capturing it, so this walks the frames itself.
+    """
+    lines = [f"thread stacks ({reason}):"]
+    frames = sys._current_frames()
+    names = {t.ident: t.name for t in threading.enumerate()}
+    for ident, frame in frames.items():
+        lines.append(f"--- thread {names.get(ident, '?')} ({ident})")
+        lines.extend(
+            "    " + part
+            for chunk in traceback.format_stack(frame)
+            for part in chunk.rstrip().splitlines()
+        )
+    text = "\n".join(lines)
+    logging.getLogger("watchlog.diagnostics").warning("%s", text)
+    return text
 
 
 class _StreamToLog(io.TextIOBase):

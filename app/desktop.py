@@ -98,7 +98,10 @@ def _start_server(port: int):
         host="127.0.0.1",
         port=port,
         log_level="info",
-        access_log=False,
+        # On in the window, where it is the only record of what the UI asked
+        # for. After a freeze the last few lines are the most useful thing in
+        # the file: they say what the page was doing when it stopped.
+        access_log=True,
         # log_config=None: don't let uvicorn install its own console handlers.
         # Its loggers then propagate to the root logger, so "Exception in ASGI
         # application" ends up in the same file as everything else instead of
@@ -147,6 +150,72 @@ def _window_geometry(webview) -> tuple:
         return width, height, (screen.width - width) // 2, (screen.height - height) // 2
     except Exception:  # no display info — headless, or an unusual GUI backend
         return 1360, 900, None, None
+
+
+def _main_window_handle() -> Optional[int]:
+    """The largest visible top-level window this process owns, or None."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    ours = os.getpid()
+    best = [None, 0]
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _lparam):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == ours and user32.IsWindowVisible(hwnd):
+            rect = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            area = (rect.right - rect.left) * (rect.bottom - rect.top)
+            if area > best[1]:
+                best[0], best[1] = hwnd, area
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return best[0]
+
+
+def _start_watchdog(interval: float = 10.0, heartbeat: float = 300.0) -> None:
+    """Notice a frozen window and write down what the process was doing.
+
+    A hang leaves no traceback: nothing raises, the message pump simply stops
+    and the window ignores even Alt+F4. Windows already tracks this — the same
+    check that puts "(Not Responding)" in a title bar — so the only missing
+    piece is a thread on the outside asking, and recording the answer while it
+    is still true. The heartbeat gives the log a timeline, so a gap in it says
+    when things stopped even if the freeze took the whole process down.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    def loop() -> None:
+        hung_since: Optional[float] = None
+        last_beat = 0.0
+        while True:
+            time.sleep(interval)
+            try:
+                hwnd = _main_window_handle()
+                now = time.monotonic()
+                if hwnd and ctypes.windll.user32.IsHungAppWindow(hwnd):
+                    if hung_since is None:
+                        hung_since = now
+                        log.warning("the window has stopped responding to input")
+                        logs.dump_stacks("window not responding")
+                    elif now - hung_since > 60 and int(now - hung_since) % 60 < interval:
+                        log.warning("still frozen after %.0fs", now - hung_since)
+                elif hung_since is not None:
+                    log.warning("window recovered after %.0fs", now - hung_since)
+                    hung_since = None
+                if now - last_beat >= heartbeat:
+                    last_beat = now
+                    log.info("alive: threads=%d", threading.active_count())
+            except Exception:  # a watchdog must never be the thing that breaks
+                log.exception("watchdog check failed")
+
+    threading.Thread(target=loop, name="watchdog", daemon=True).start()
 
 
 def _open_window(url: str) -> bool:
@@ -272,6 +341,7 @@ def run(port: Optional[int] = None) -> int:
         port = int(env_port) if env_port else _pick_port()
 
     log.info("desktop start: port=%s python=%s", port, sys.executable)
+    _start_watchdog()
     server, thread = _start_server(port)
     url = f"http://127.0.0.1:{port}/"
     try:

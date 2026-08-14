@@ -236,6 +236,30 @@ process before Python can log anything. Those write a native stack trace to
 `logs/watchlog-crash.log` instead. If that file exists, something crashed at a
 level below the app.
 
+### If the window freezes
+
+A freeze is not a crash: nothing raises, so nothing is logged by itself. A
+watchdog thread handles that case. It asks Windows every ten seconds whether
+the window is still answering — the same check behind "(Not Responding)" in a
+title bar — and the moment it isn't, it writes `the window has stopped
+responding to input` to the log along with a stack for every thread. It logs
+again when the window recovers, so the entry says how long it lasted.
+
+While the window is frozen the server usually still works, because it runs on
+its own thread. From a terminal:
+
+```bash
+curl http://127.0.0.1:8000/diagnostics/stacks
+```
+
+A reply means the app is alive and the freeze is in the window. No reply at
+all means the whole process is stuck, which is a different answer but still an
+answer. Either way the output goes into the log too.
+
+Reading a captured stack: if the main thread shows application frames, the
+freeze is in this code. If it shows nothing but the pywebview message loop,
+whatever is blocking sits below Python, in WebView2 or .NET.
+
 ## API
 
 The UI is a thin layer over a REST API, with interactive docs at

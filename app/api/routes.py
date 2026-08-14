@@ -5,9 +5,9 @@ import threading
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
-from app import db, downloads
+from app import db, downloads, logs
 from app.categorize import rules
 from app.categorize import themes as theming
 from app.categorize.embeddings import EmbeddingUnavailable
@@ -38,6 +38,18 @@ router = APIRouter()
 
 def get_db(request: Request) -> sqlite3.Connection:
     return request.app.state.db
+
+
+@router.get("/diagnostics/stacks", response_class=PlainTextResponse)
+def diagnostic_stacks():
+    """What every thread is doing right now, also written to the log.
+
+    Meant to be called from outside the app while the window is frozen: the
+    server runs on its own thread, so it usually answers even when the UI has
+    stopped. A useful reply means the freeze is in the window; no reply at all
+    is an answer too.
+    """
+    return logs.dump_stacks("requested via /diagnostics/stacks")
 
 
 @router.post("/sync")

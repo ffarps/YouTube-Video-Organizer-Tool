@@ -113,6 +113,32 @@ def test_a_failing_request_is_logged_with_its_path(tmp_path, monkeypatch, loggin
     assert "Traceback" in text
 
 
+def test_dump_stacks_names_every_thread(tmp_path, logging_sandbox):
+    """A freeze raises nothing, so the stacks are the whole diagnosis."""
+    path = logs.setup(tmp_path / "logs")
+    started = threading.Event()
+    release = threading.Event()
+
+    def parked():
+        started.set()
+        release.wait(5)
+
+    thread = threading.Thread(target=parked, name="parked-thread")
+    thread.start()
+    started.wait(5)
+    try:
+        text = logs.dump_stacks("test")
+    finally:
+        release.set()
+        thread.join()
+
+    assert "parked-thread" in text
+    assert "MainThread" in text
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    assert "parked-thread" in path.read_text(encoding="utf-8")
+
+
 def test_capture_std_streams_leaves_real_streams_alone(tmp_path, logging_sandbox):
     logs.setup(tmp_path / "logs")
     before = sys.stdout
