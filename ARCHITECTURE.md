@@ -172,7 +172,14 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   No build step; talks to the API with fetch. Voting never touches playback:
   `#votePill` is a corner nudge in the last ~12s that auto-fades, and
   `#rateCard` (the full panel + up-next countdown) only appears once the
-  video has actually ended. The player swaps between the YouTube iframe and
+  video has actually ended. `#nextPill` leads both from ~20s out (`lead` in
+  `startRateWatch`, floored at 8s so short clips still get a warning): it
+  counts the *video* down and names what follows, so the panel at the end is
+  never a surprise. Deliberately no auto-fade, unlike the vote pill — its job
+  is to still be there when the video ends — and it withdraws if you seek
+  back, since `remaining` is recomputed every tick. Both corner overlays sit
+  in `#cornerStack`, one flex column, so they stack instead of landing on top
+  of each other. The player swaps between the YouTube iframe and
   `#localPlayer` (a `<video>` on `/media`) — everything downstream reads
   `playerClock()` instead of branching, and hiding the iframe needs an
   explicit `iframe[hidden]` rule because `#playerHost iframe` outranks the

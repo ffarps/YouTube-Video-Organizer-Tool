@@ -93,7 +93,12 @@
   #playerHost iframe { width: 100%; height: 100%; display: block; border: 0; }
   /* the nudge in the last seconds: a small pill in the corner. It never
      covers the frame and never touches playback — vote and keep watching. */
-  #votePill { position: absolute; right: 16px; bottom: 16px; z-index: 3; display: flex; align-items: center; gap: .6rem;
+  /* Both corner overlays live in one bottom-right column, so the countdown and
+     the vote nudge stack instead of landing on top of each other. */
+  #cornerStack { position: absolute; right: 16px; bottom: 16px; z-index: 3; display: flex;
+    flex-direction: column; align-items: flex-end; gap: .5rem; pointer-events: none; }
+  #cornerStack > * { pointer-events: auto; }
+  #votePill { display: flex; align-items: center; gap: .6rem;
     padding: .5rem .6rem .5rem 1.05rem; border-radius: 999px; background: rgba(10,12,16,.85);
     border: 1px solid rgba(255,255,255,.15); box-shadow: 0 8px 28px rgba(0,0,0,.55); backdrop-filter: blur(6px);
     opacity: 0; transform: translateY(10px); transition: opacity .28s, transform .28s; }
@@ -104,6 +109,20 @@
     font-size: 1.45rem; line-height: 1; filter: grayscale(1); opacity: .7; transition: filter .12s, opacity .12s, transform .1s; }
   .vote-mini:hover { opacity: 1; transform: scale(1.12); border-color: transparent; }
   .vote-mini.on { filter: none; opacity: 1; background: rgba(255,255,255,.2); }
+  /* the "what's next" card: how long is left, and what follows */
+  #nextPill { display: flex; align-items: center; gap: .7rem; max-width: min(420px, 60%);
+    padding: .5rem .7rem; border-radius: 12px; background: rgba(10,12,16,.88);
+    border: 1px solid rgba(255,255,255,.15); box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    backdrop-filter: blur(6px); opacity: 0; transform: translateY(10px); transition: opacity .28s, transform .28s; }
+  #nextPill[hidden] { display: none; }
+  #nextPill.show { opacity: 1; transform: none; }
+  #npThumb { width: 72px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: #000; flex: none; }
+  #nextPill .np-text { min-width: 0; }
+  #npCount { font-size: .82rem; color: #b9c0cc; white-space: nowrap; }
+  #npTitle { font-size: .9rem; color: #e6e9ef; font-weight: 600; margin-top: .1rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #npNow { flex: none; font-size: .78rem; padding: .3rem .6rem; border-radius: 999px;
+    background: var(--accent2); border-color: var(--accent2); color: #fff; }
   /* the end-of-video panel: only ever shown once the video is actually over,
      so the frame is already spent — solid black, centered */
   #rateCard { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 1.2rem;
@@ -382,10 +401,20 @@
     <div id="playerHost">
       <div id="ytplayer"></div>
       <video id="localPlayer" controls playsinline hidden></video>
-      <div id="votePill" hidden>
-        <span id="vpLabel">How was it?</span>
-        <button class="vote-mini down" data-vote="-1" title="Not for me">&#128078;</button>
-        <button class="vote-mini up" data-vote="1" title="More like this">&#128077;</button>
+      <div id="cornerStack">
+        <div id="votePill" hidden>
+          <span id="vpLabel">How was it?</span>
+          <button class="vote-mini down" data-vote="-1" title="Not for me">&#128078;</button>
+          <button class="vote-mini up" data-vote="1" title="More like this">&#128077;</button>
+        </div>
+        <div id="nextPill" hidden>
+          <img id="npThumb" alt="" hidden>
+          <div class="np-text">
+            <div class="np-count" id="npCount"></div>
+            <div class="np-title" id="npTitle" hidden></div>
+          </div>
+          <button id="npNow" hidden>Play now &#9654;</button>
+        </div>
       </div>
       <div id="rateCard">
         <div id="rateInner">
@@ -885,7 +914,7 @@ async function dlMenu(el, e) {
 
 // --- embedded player ---------------------------------------------------
 let ytApiPromise = null, ytPlayer = null, playingVideo = null, playQueue = null;
-let rateTimer = null, countdownTimer = null, pillTimer = null;
+let rateTimer = null, countdownTimer = null, pillTimer = null, npFadeTimer = null;
 let pillShown = false, doneMode = false;
 let localMode = false;   // true while a downloaded file is playing from disk
 
@@ -964,6 +993,42 @@ async function voteFromPill(n) {
   await saveVote(n);
 }
 
+// --- the countdown to the end, and what's next -------------------------
+// Unlike the vote pill this does not fade out on its own: its whole job is to
+// still be there when the video ends, so the rate panel doesn't appear out of
+// nowhere. It counts the video down, not the auto-advance — that is
+// `startCountdown`, which only starts once the video is actually over.
+function showNextPill(remaining) {
+  if (!playingVideo || doneMode) return;
+  const next = hasNextInQueue() ? playQueue.list[playQueue.idx + 1] : null;
+  const secs = Math.max(0, Math.ceil(remaining));
+  $("npCount").textContent = next ? `Up next in ${secs}s` : `Ends in ${secs}s`;
+  $("npTitle").textContent = next ? next.title : "";
+  $("npTitle").hidden = !next;
+  $("npNow").hidden = !next;
+  const thumb = $("npThumb");
+  const src = next && next.thumbnail_url;
+  thumb.hidden = !src;
+  if (src && thumb.getAttribute("src") !== src) thumb.src = src;  // don't re-set every tick
+  const pill = $("nextPill");
+  clearTimeout(npFadeTimer);  // a fade-out still pending would hide it again
+  if (pill.hidden) {
+    pill.hidden = false;
+    void pill.offsetWidth;  // flush hidden->flex so the fade runs, as the vote pill does
+  }
+  pill.classList.add("show");
+}
+
+function hideNextPill() {
+  const pill = $("nextPill");
+  if (pill.hidden) return;
+  pill.classList.remove("show");
+  clearTimeout(npFadeTimer);
+  npFadeTimer = setTimeout(() => { pill.hidden = true; }, 300);  // after the fade
+}
+
+$("npNow").onclick = () => { stopCountdown(); advanceQueue(); };
+
 // --- the end panel (video over) ---
 function paintVote(n) {
   [...$("rateVote").children].forEach(b =>
@@ -985,6 +1050,7 @@ function enterDoneMode() {
   if (doneMode) return;
   doneMode = true;
   hideVotePill();
+  hideNextPill();
   paintVote(playingVideo.rating || 0);
   const next = hasNextInQueue() ? playQueue.list[playQueue.idx + 1] : null;
   $("rateTitle").textContent = playingVideo.rating ? "Thanks!" : "How was it?";
@@ -1024,12 +1090,17 @@ function playerClock() {
 function startRateWatch() {
   stopRateWatch();
   rateTimer = setInterval(() => {
-    if (pillShown || doneMode) return;
+    if (doneMode) return;
     const clock = playerClock();
     if (!clock || !clock.duration) return;
     const remaining = clock.duration - clock.current;
+    // The countdown leads the vote nudge, so the panel at the end is never a
+    // surprise: you can see it coming and what follows it. Seek backwards and
+    // it withdraws again, because `remaining` is read fresh every tick.
+    const lead = Math.min(20, Math.max(8, clock.duration * 0.1));
+    if (remaining <= lead) showNextPill(remaining); else hideNextPill();
     const threshold = Math.min(12, Math.max(6, clock.duration * 0.08));
-    if (remaining <= threshold) showVotePill();
+    if (!pillShown && remaining <= threshold) showVotePill();
   }, 1000);
 }
 function stopRateWatch() {
@@ -1098,6 +1169,7 @@ async function openPlayer(v, queue = null) {
   stopCountdown();
   hideRateCard();
   hideVotePill();
+  hideNextPill();
   $("playerTitle").textContent = v.title;
   $("playerYt").href = `https://www.youtube.com/watch?v=${v.id}`;
   $("playerModal").hidden = false;
@@ -1198,6 +1270,7 @@ function closePlayer() {
   stopCountdown();
   hideRateCard();
   hideVotePill();
+  hideNextPill();
   doneMode = false;
   playingVideo = null;
   playQueue = null;
