@@ -64,7 +64,15 @@ def create_app() -> FastAPI:
 
         @app.get("/", include_in_schema=False)
         def home():
-            return FileResponse(index)
+            # no-cache, not no-store: keep caching it, but revalidate every
+            # time — an unchanged page is a cheap 304. Without a freshness
+            # directive (FileResponse sends only last-modified and etag) the
+            # webview falls back to heuristic caching, a fraction of the file's
+            # age, and serves the old page for hours after an edit. The desktop
+            # window keeps its profile between runs, so that stale copy
+            # outlives a restart: the app relaunches looking unchanged, and the
+            # frontend is the whole UI.
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
     favicon = STATIC_DIR / "favicon.ico"
     if favicon.is_file():

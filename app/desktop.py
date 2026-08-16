@@ -87,6 +87,24 @@ def _pick_port(preferred: int = DEFAULT_PORT) -> int:
     raise RuntimeError("No free TCP port on localhost")
 
 
+def _asset_stamp() -> str:
+    """A cache-buster that changes when the frontend does.
+
+    The window keeps its browser profile between runs, and a page cached
+    without a freshness directive can be served for hours without ever asking
+    the server (see the `Cache-Control` on `/` in app/main.py) — so an updated
+    frontend silently doesn't appear, restart after restart, and the app looks
+    exactly like it did before the change. A URL carrying index.html's mtime
+    can't be answered out of that cache. Belt to the header's braces: the
+    header only helps once the new page has been fetched at least once, which
+    is the thing a stale cache prevents.
+    """
+    try:
+        return str(int((ROOT / "static" / "index.html").stat().st_mtime))
+    except OSError:  # no frontend on disk — the API still serves
+        return ""
+
+
 def _start_server(port: int):
     """Run the FastAPI app on a daemon thread. Returns (server, thread)."""
     import uvicorn
@@ -419,6 +437,7 @@ def _open_window(url: str) -> bool:
     try:
         import webview
     except ImportError:
+        log.warning("pywebview not installed, falling back to a Chromium window")
         return False
 
     # "open on YouTube" and channel links should leave the app window and land
@@ -451,6 +470,7 @@ def _open_window(url: str) -> bool:
         window.show()
         window.restore()
 
+    log.info("window backend: pywebview (fullscreen bridge active)")
     # private_mode=False + storage_path: the colour theme lives in
     # localStorage, and pywebview throws that away between runs by default.
     webview.start(
@@ -540,7 +560,8 @@ def run(port: Optional[int] = None) -> int:
     log.info("desktop start: port=%s python=%s", port, sys.executable)
     _start_watchdog()
     server, thread = _start_server(port)
-    url = f"http://127.0.0.1:{port}/"
+    stamp = _asset_stamp()
+    url = f"http://127.0.0.1:{port}/" + (f"?v={stamp}" if stamp else "")
     try:
         _wait_until_serving(server, thread)
     except Exception as exc:
@@ -549,6 +570,9 @@ def run(port: Optional[int] = None) -> int:
         return 1
 
     try:
+        # Which backend opened the window decides what the page can do — the
+        # fullscreen bridge only exists under pywebview — so say so in the log.
+        log.info("opening window: trying pywebview")
         if not (_open_window(url) or _open_browser_window(url, port)):
             _error_box(
                 "Watchlog is running but there is no window to show it in.\n\n"
