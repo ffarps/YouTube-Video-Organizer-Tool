@@ -179,7 +179,17 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   is to still be there when the video ends — and it withdraws if you seek
   back, since `remaining` is recomputed every tick. Both corner overlays sit
   in `#cornerStack`, one flex column, so they stack instead of landing on top
-  of each other. The player swaps between the YouTube iframe and
+  of each other — and `syncOverlayLayer` lifts that column into the **top
+  layer** as a manual popover whenever the *iframe* is the fullscreen element.
+  YouTube's own button raises the iframe, and the overlays are its siblings,
+  so they would be painted underneath it; nothing stacks above a fullscreen
+  element except the top layer itself, and a popover gets there without
+  touching YouTube's fullscreen (re-requesting fullscreen on `#playerHost`
+  also works and needs no fresh gesture, but it leaves YouTube's own exit
+  button doing nothing visible). The `popover` attribute is added only for the
+  duration: worn permanently, the UA's popover styles — `inset: 0`,
+  `margin: auto`, its own border and background — leak into the ordinary
+  layout. The player swaps between the YouTube iframe and
   `#localPlayer` (a `<video>` on `/media`) — everything downstream reads
   `playerClock()` instead of branching, and hiding the iframe needs an
   explicit `iframe[hidden]` rule because `#playerHost iframe` outranks the

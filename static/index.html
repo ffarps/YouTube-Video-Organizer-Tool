@@ -95,9 +95,21 @@
      covers the frame and never touches playback — vote and keep watching. */
   /* Both corner overlays live in one bottom-right column, so the countdown and
      the vote nudge stack instead of landing on top of each other. */
-  #cornerStack { position: absolute; right: 16px; bottom: 16px; z-index: 3; display: flex;
+  /* Sits above the player's control bar rather than across the scrubber — the
+     countdown must never be the thing covering the progress bar you're
+     watching. YouTube's controls grow with the player, hence the taller
+     clearance in fullscreen (`:popover-open` is the YouTube-fullscreen case,
+     where the stack is lifted into the top layer). */
+  #cornerStack { position: absolute; right: 16px; bottom: 64px; z-index: 3; display: flex;
     flex-direction: column; align-items: flex-end; gap: .5rem; pointer-events: none; }
+  #playerHost:fullscreen #cornerStack { bottom: 96px; }
   #cornerStack > * { pointer-events: auto; }
+  /* Lifted into the top layer while the YouTube iframe is what went
+     fullscreen (see syncOverlayLayer). The popover UA styles have to be
+     undone — inset:0 and margin:auto would stretch it across the screen, and
+     it brings its own border, padding and background. */
+  #cornerStack:popover-open { position: fixed; right: 16px; bottom: 96px; top: auto; left: auto;
+    margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; }
   #votePill { display: flex; align-items: center; gap: .6rem;
     padding: .5rem .6rem .5rem 1.05rem; border-radius: 999px; background: rgba(10,12,16,.85);
     border: 1px solid rgba(255,255,255,.15); box-shadow: 0 8px 28px rgba(0,0,0,.55); backdrop-filter: blur(6px);
@@ -1241,10 +1253,45 @@ function syncShellFullscreen() {
 }
 document.addEventListener("fullscreenchange", () => {
   syncShellFullscreen();
+  syncOverlayLayer();
   const on = !!document.fullscreenElement;
   $("playerFs").innerHTML = on ? "&#9973;" : "&#9974;";
   $("playerFs").title = on ? "Leave fullscreen (f / Esc)" : "Fullscreen (f)";
 });
+
+// YouTube's own fullscreen raises the *iframe*, and the corner overlays are
+// its siblings — the countdown would be painted underneath it and never seen.
+// Nothing in the page stacks above a fullscreen element except the top layer
+// itself, and a manual popover is the way into it that disturbs nothing else:
+// YouTube keeps its own fullscreen exactly as it is and the countdown floats
+// over it. Our own button raises #playerHost, which already contains the
+// stack, so there is nothing to lift. The attribute goes on only for the
+// duration — carrying `popover` the rest of the time would drag the UA's
+// popover styles into the ordinary layout.
+function syncOverlayLayer() {
+  const stack = $("cornerStack");
+  if (!stack.showPopover) return;  // engine without the top layer: leave it be
+  const host = $("playerHost");
+  const fsEl = document.fullscreenElement;
+  const lift = !!fsEl && fsEl !== host && host.contains(fsEl);
+  const open = stack.matches(":popover-open");
+  try {
+    if (lift && !open) { stack.setAttribute("popover", "manual"); stack.showPopover(); }
+    else if (!lift && open) { stack.hidePopover(); stack.removeAttribute("popover"); }
+  } catch (err) {
+    stack.removeAttribute("popover");  // never let an overlay break playback
+  }
+}
+
+// Unconditional, for closing the player: exitFullscreen resolves later, so at
+// that moment fullscreenElement is still set and syncOverlayLayer would read
+// the old state and keep the stack lifted over a player that is gone.
+function dropOverlayLayer() {
+  const stack = $("cornerStack");
+  if (!stack.matches || !stack.matches(":popover-open")) return;
+  try { stack.hidePopover(); } catch (err) { /* already closed */ }
+  stack.removeAttribute("popover");
+}
 
 // Our own fullscreen control, alongside the embed's. Both routes work and both
 // end up here: a request from inside the YouTube iframe is granted, and this
@@ -1263,6 +1310,7 @@ $("playerFs").onclick = toggleFullscreen;
 function closePlayer() {
   // Never leave the window stretched over a player that's gone.
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  dropOverlayLayer();  // and never leave the stack stranded in the top layer
   $("playerModal").hidden = true;
   if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
   stopLocalPlayer();
