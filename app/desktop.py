@@ -218,6 +218,202 @@ def _start_watchdog(interval: float = 10.0, heartbeat: float = 300.0) -> None:
     threading.Thread(target=loop, name="watchdog", daemon=True).start()
 
 
+def _user32():
+    """user32 with the signatures ctypes gets wrong left to itself.
+
+    Handles and HMONITORs are pointer-sized; the default int conversion would
+    truncate them to 32 bits and hand Windows a handle to nothing.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.MonitorFromWindow.restype = wintypes.HMONITOR
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND] + [ctypes.c_int] * 4 + [
+        wintypes.UINT
+    ]
+    return user32
+
+
+def _set_topmost(hwnd: int, on: bool) -> None:
+    """Move the window in or out of the always-on-top band, and nothing else.
+
+    Position, size and style are left exactly as they are: while fullscreen
+    this is the only thing that changes as focus comes and goes.
+    """
+    HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+    SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x1, 0x2, 0x10
+    _user32().SetWindowPos(
+        hwnd, HWND_TOPMOST if on else HWND_NOTOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    )
+
+
+def _fullscreen_win32(on: bool, saved: dict) -> None:
+    """Cover the monitor — taskbar included — or put the window back.
+
+    Two things have to be true before Windows lets a window over the taskbar,
+    and "maximize it" gets neither: maximizing sizes a window to the *work
+    area*, which is the screen minus the taskbar, and leaves it in the ordinary
+    z-order band the always-on-top taskbar sits above. So the window is placed
+    on the monitor's full rect and lifted into the topmost band instead, which
+    is what every video player does. `saved` carries the style and placement to
+    come back to; `SetWindowPlacement` restores a maximized window as maximized.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class WINDOWPLACEMENT(ctypes.Structure):
+        _fields_ = [
+            ("length", wintypes.UINT),
+            ("flags", wintypes.UINT),
+            ("showCmd", wintypes.UINT),
+            ("ptMinPosition", wintypes.POINT),
+            ("ptMaxPosition", wintypes.POINT),
+            ("rcNormalPosition", wintypes.RECT),
+        ]
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),  # the whole screen
+            ("rcWork", wintypes.RECT),  # ...minus the taskbar
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    GWL_STYLE, WS_OVERLAPPEDWINDOW = -16, 0x00CF0000
+    HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+    SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_FRAMECHANGED = 0x1, 0x2, 0x10, 0x20
+    MONITOR_DEFAULTTONEAREST = 2
+
+    user32 = _user32()
+
+    if not on:
+        hwnd = saved.pop("hwnd", None)
+        if not hwnd:  # never entered fullscreen — nothing to undo
+            return
+        user32.SetWindowLongW(hwnd, GWL_STYLE, saved["style"])
+        user32.SetWindowPos(
+            hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+        )
+        user32.SetWindowPlacement(hwnd, ctypes.byref(saved["placement"]))
+        return
+
+    hwnd = _main_window_handle()
+    if not hwnd:
+        raise RuntimeError("no visible window to make fullscreen")
+
+    placement = WINDOWPLACEMENT()
+    placement.length = ctypes.sizeof(placement)
+    user32.GetWindowPlacement(hwnd, ctypes.byref(placement))
+    info = MONITORINFO()
+    info.cbSize = ctypes.sizeof(info)
+    monitor = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+    user32.GetMonitorInfoW(monitor, ctypes.byref(info))
+    style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+    saved.update(hwnd=hwnd, placement=placement, style=style)
+
+    # Title bar and resize frame off: the client area, and so the webview, is
+    # then the whole screen and the page's fullscreen element fills it.
+    user32.SetWindowLongW(hwnd, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW)
+    rect = info.rcMonitor
+    user32.SetWindowPos(
+        hwnd, HWND_TOPMOST,
+        rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+        SWP_FRAMECHANGED | SWP_NOACTIVATE,
+    )
+
+
+def _bind_fullscreen(window) -> None:
+    """Let a fullscreen video take the screen, not just the window.
+
+    WebView2 has no fullscreen of its own: `requestFullscreen()` inside it
+    expands the element to fill the *webview*, and the webview stops at the
+    window's edge — so a "fullscreen" video keeps the title bar, and the
+    desktop stays visible around a window that is only 90% of the screen.
+    Nothing in the page can fix that; only the process owning the window can.
+    So the page reports every fullscreenchange here (`syncShellFullscreen` in
+    static/index.html) and the window follows it.
+
+    On Windows the move is made directly (`_fullscreen_win32`) rather than
+    through pywebview's `toggle_fullscreen`, which maximizes the form and so
+    leaves the taskbar drawn over the video. Elsewhere its version is the only
+    one there is.
+
+    Not needed in the Chromium fallback or in a real browser, where fullscreen
+    already means the screen: `window.pywebview` doesn't exist there and the
+    page skips the call.
+    """
+    state = {"on": False}
+    saved: dict = {}
+    watcher: dict = {"stop": None}
+    lock = threading.Lock()
+
+    def follow_focus(hwnd: int, stop: threading.Event, interval: float = 0.25) -> None:
+        """Stay on top only while the window is the one in front.
+
+        Being topmost is what puts a fullscreen video over the taskbar, but it
+        outstays its welcome the moment you alt-tab: the window would sit over
+        whatever you switched to. Nothing reports a lost activation to this
+        process — the form's own events are pywebview's, not ours — so the
+        foreground window is polled instead, the same tactic the watchdog uses
+        for hangs. Only the z-order moves, so switching back finds the video
+        still fullscreen.
+        """
+        user32 = _user32()
+        on_top = True
+        while not stop.wait(interval):
+            try:
+                front = user32.GetForegroundWindow() == hwnd
+                if front == on_top:
+                    continue
+                with lock:
+                    if not state["on"]:  # left fullscreen while we waited
+                        return
+                    _set_topmost(hwnd, front)
+                on_top = front
+            except Exception:
+                log.exception("fullscreen focus watch failed")
+                return
+
+    def set_fullscreen(on: bool) -> bool:
+        """Exposed to the page as `pywebview.api.set_fullscreen(bool)`."""
+        want = bool(on)
+        # Called on a worker thread (pywebview runs every exposed function on
+        # its own), so two fullscreenchanges in quick succession can overlap.
+        with lock:
+            if want == state["on"]:
+                return state["on"]
+            if watcher["stop"]:  # stop before the geometry goes back
+                watcher["stop"].set()
+                watcher["stop"] = None
+            try:
+                if sys.platform == "win32":
+                    _fullscreen_win32(want, saved)
+                else:
+                    window.toggle_fullscreen()
+            except Exception:
+                log.exception("could not %s fullscreen", "enter" if want else "leave")
+                return state["on"]
+            state["on"] = want
+            log.info("window fullscreen: %s", want)
+            if want and sys.platform == "win32":
+                stop = threading.Event()
+                watcher["stop"] = stop
+                threading.Thread(
+                    target=follow_focus,
+                    args=(saved["hwnd"], stop),
+                    name="fullscreen-focus",
+                    daemon=True,
+                ).start()
+            return want
+
+    window.expose(set_fullscreen)
+
+
 def _open_window(url: str) -> bool:
     """Native window via pywebview. False if the package isn't installed."""
     try:
@@ -241,6 +437,7 @@ def _open_window(url: str) -> bool:
         background_color=BACKGROUND,
         text_select=True,
     )
+    _bind_fullscreen(window)
 
     def reveal() -> None:
         """Put the window on screen whatever state it opened in.

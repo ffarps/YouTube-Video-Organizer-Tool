@@ -82,7 +82,14 @@
   #playerHead { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .5rem .8rem; }
   #playerTitle { font-weight: 600; font-size: .95rem; }
   #playerClose { font-size: 1.05rem; padding: .15rem .6rem; }
+  #playerHead .headbtns { display: flex; gap: .4rem; flex: none; }
+  #playerFs { font-size: 1rem; padding: .15rem .6rem; }
   #playerHost { aspect-ratio: 16/9; background: #000; position: relative; }
+  /* Fullscreen goes on #playerHost, not the iframe, so the vote pill and the
+     end-of-video panel come along instead of being stranded behind it. The
+     aspect ratio has to go for the duration: with it the host would keep a
+     16/9 box on a screen that isn't. */
+  #playerHost:fullscreen { aspect-ratio: auto; width: 100%; height: 100%; }
   #playerHost iframe { width: 100%; height: 100%; display: block; border: 0; }
   /* the nudge in the last seconds: a small pill in the corner. It never
      covers the frame and never touches playback — vote and keep watching. */
@@ -367,7 +374,10 @@
   <div id="playerBox">
     <div id="playerHead">
       <span id="playerTitle"></span>
-      <button id="playerClose" title="Close (Esc)">&times;</button>
+      <span class="headbtns">
+        <button id="playerFs" title="Fullscreen (f)">&#9974;</button>
+        <button id="playerClose" title="Close (Esc)">&times;</button>
+      </span>
     </div>
     <div id="playerHost">
       <div id="ytplayer"></div>
@@ -1145,7 +1155,42 @@ function stopLocalPlayer() {
   el.hidden = true;
 }
 
+// Fullscreen means the whole screen, and in the desktop window that takes the
+// shell's help: WebView2 grows the element to fill the webview and stops at the
+// window's edge, title bar and all. `pywebview.api.set_fullscreen` moves the
+// window itself (see app/desktop.py). In a browser — and in the Chromium
+// fallback window — fullscreen is already the screen and there is no bridge to
+// call. The event fires for the YouTube iframe too: an <iframe> whose content
+// goes fullscreen becomes this document's fullscreenElement.
+function syncShellFullscreen() {
+  const api = window.pywebview && window.pywebview.api;
+  if (!api || !api.set_fullscreen) return;
+  Promise.resolve(api.set_fullscreen(!!document.fullscreenElement)).catch(() => {});
+}
+document.addEventListener("fullscreenchange", () => {
+  syncShellFullscreen();
+  const on = !!document.fullscreenElement;
+  $("playerFs").innerHTML = on ? "&#9973;" : "&#9974;";
+  $("playerFs").title = on ? "Leave fullscreen (f / Esc)" : "Fullscreen (f)";
+});
+
+// Our own fullscreen control, alongside the embed's. Both routes work and both
+// end up here: a request from inside the YouTube iframe is granted, and this
+// document's fullscreenchange fires with the iframe as the fullscreen element,
+// so the shell hears about it either way. The difference is what goes
+// fullscreen — YouTube's button raises the iframe, which leaves #votePill and
+// #rateCard stranded behind it, while this raises #playerHost and takes them
+// along.
+function toggleFullscreen() {
+  if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+  const host = $("playerHost");
+  if (host.requestFullscreen) host.requestFullscreen().catch(err => toast(`Fullscreen refused: ${err.message}`));
+}
+$("playerFs").onclick = toggleFullscreen;
+
 function closePlayer() {
+  // Never leave the window stretched over a player that's gone.
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   $("playerModal").hidden = true;
   if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
   stopLocalPlayer();
@@ -1160,8 +1205,20 @@ function closePlayer() {
 
 $("playerClose").onclick = closePlayer;
 $("playerModal").onclick = (e) => { if (e.target === $("playerModal")) closePlayer(); };
+// f — the shortcut every video player has. Only while the player is open, and
+// never while something is being typed into.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "f" && e.key !== "F") return;
+  if ($("playerModal").hidden || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  e.preventDefault();
+  toggleFullscreen();
+});
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  // Esc gets one job at a time: leaving fullscreen first, so the first press
+  // doesn't also close the player out from under a video you're still watching.
+  if (document.fullscreenElement) { e._closedModal = true; return; }
   if (!$("playerModal").hidden) { closePlayer(); e._closedModal = true; }
   else if (!$("bulkModal").hidden) { $("bulkModal").hidden = true; e._closedModal = true; }
   else if (selecting) { setSelecting(false); e._closedModal = true; }

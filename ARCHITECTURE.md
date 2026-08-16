@@ -143,7 +143,25 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   launcher's show state to the first window a process opens — a hidden or
   minimized launch is otherwise indistinguishable from a crash. pywebview's
   `private_mode` default would drop the localStorage colour theme every run,
-  hence `storage_path`.
+  hence `storage_path`. **WebView2 has no fullscreen of its own** — its
+  backend implements none, so `requestFullscreen()` grows the element to fill
+  the webview and stops at the window's edge, title bar included. The window
+  is the only thing that can go fullscreen, so `_bind_fullscreen` exposes
+  `pywebview.api.set_fullscreen` and the page drives it from
+  `fullscreenchange` (`syncShellFullscreen`); nothing reports the window's own
+  state, so the desired one is tracked on the Python side. pywebview's
+  `toggle_fullscreen` is **not** what does the move on Windows: it maximizes
+  the form, and maximizing means the *work area* — the screen minus the
+  taskbar, which then stays drawn over the video, in front of a window that is
+  also still in the ordinary z-order band. `_fullscreen_win32` places it on
+  the monitor's full rect and lifts it into the topmost band instead, saving
+  the `WINDOWPLACEMENT` and window style to come back to. Topmost only holds
+  while the window is in front — otherwise alt-tabbing away leaves a video
+  sitting over whatever you switched to — and nothing reports a lost
+  activation to this process, so `follow_focus` polls `GetForegroundWindow`
+  for the duration and moves only the z-order, never the geometry. The
+  Chromium fallback and a plain browser need none of this and skip it —
+  `window.pywebview` isn't there.
 - Launchers: `Watchlog.vbs` (silent — wscript never shows a console, a batch
   file always does) → `start.bat` for the one-time install → `pythonw -m
   app.desktop`. `create-desktop-shortcut.bat` points the Desktop icon at
@@ -158,8 +176,17 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   `#localPlayer` (a `<video>` on `/media`) — everything downstream reads
   `playerClock()` instead of branching, and hiding the iframe needs an
   explicit `iframe[hidden]` rule because `#playerHost iframe` outranks the
-  UA's `[hidden]`. Download state polls `/downloads` only while something is
-  in flight and repaints individual cards, never the grid (scroll position).
+  UA's `[hidden]`. Fullscreen has **two** routes and both end at
+  `syncShellFullscreen`: YouTube's own button (a request from inside the
+  iframe is granted, and this document's `fullscreenchange` fires with the
+  iframe as `fullscreenElement`), and `#playerFs` / the `f` key, which raise
+  `#playerHost`. Prefer the latter — raising the host rather than the iframe
+  keeps `#votePill` and `#rateCard` on screen instead of stranded behind it —
+  and note `#playerHost:fullscreen` must clear the 16/9 `aspect-ratio`, or the
+  host keeps a 16/9 box on a screen that isn't. Neither route does anything
+  for the window on its own; the desktop shell is what makes it the whole
+  screen. Download state polls `/downloads` only while something is in flight
+  and repaints individual cards, never the grid (scroll position).
 
 ## Conventions
 
