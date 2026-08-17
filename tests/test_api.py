@@ -414,6 +414,37 @@ def test_filter_unthemed_videos(client):
     assert len(both) == 2
 
 
+def test_filter_by_channel(client):
+    client.post("/videos", json={"url": "guitar000ok"})   # GuitarChannel
+    client.post("/videos", json={"url": "aivideo00ok"})   # AIChannel
+
+    only = client.get("/videos?channel=GuitarChannel").json()["videos"]
+    assert [v["id"] for v in only] == ["guitar000ok"]
+    # the name comes off a card, so it must not be case-sensitive
+    assert client.get("/videos?channel=guitarchannel").json()["videos"] == only
+    # and it stacks with the other browse filters instead of replacing them
+    client.patch("/videos/guitar000ok/watch-state", json={"status": "watched"})
+    assert client.get("/videos?channel=GuitarChannel&watched=false").json()["videos"] == []
+
+
+def test_channel_filter_spans_renames_and_missing_ids(client):
+    """A channel is matched by id OR name: rows predate a rename, and yt-dlp
+    rows can carry the name with no id. Either test alone shows half of it."""
+    conn = client.app.state.db
+    db.upsert_video(conn, {"id": "renamed0001", "title": "old upload",
+                           "channel_id": "UCchannel00", "channel_title": "Old Name"})
+    db.upsert_video(conn, {"id": "current0002", "title": "new upload",
+                           "channel_id": "UCchannel00", "channel_title": "New Name"})
+    db.upsert_video(conn, {"id": "noidrow0003", "title": "listed by yt-dlp",
+                           "channel_title": "New Name"})
+    db.upsert_video(conn, {"id": "unrelated04", "title": "somebody else",
+                           "channel_id": "UCother0000", "channel_title": "Other"})
+    conn.commit()
+
+    hits = client.get("/videos?channel=New+Name&channel_id=UCchannel00").json()["videos"]
+    assert {v["id"] for v in hits} == {"renamed0001", "current0002", "noidrow0003"}
+
+
 def test_themes_response_includes_total_videos(client):
     assert client.get("/themes").json()["total_videos"] == 0
     client.post("/videos", json={"url": "guitar000ok"})

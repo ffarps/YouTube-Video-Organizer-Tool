@@ -627,6 +627,8 @@ def list_videos(
     watched: Optional[bool] = None,
     unthemed: Optional[bool] = None,
     downloaded: Optional[bool] = None,
+    channel: Optional[str] = None,
+    channel_id: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
 ) -> List[dict]:
@@ -666,6 +668,18 @@ def list_videos(
         clauses.append("d.status = 'done'")
     elif downloaded is False:
         clauses.append("COALESCE(d.status, '') != 'done'")
+    # One channel, matched by id *and* by name: a yt-dlp row can carry the name
+    # with no id, and a channel that renamed leaves its old name on everything
+    # ingested before the rename. Either test alone shows only half the channel.
+    channel_match = []
+    if channel_id:
+        channel_match.append("v.channel_id = ?")
+        params.append(channel_id)
+    if channel:
+        channel_match.append("v.channel_title = ? COLLATE NOCASE")
+        params.append(channel)
+    if channel_match:
+        clauses.append("(" + " OR ".join(channel_match) + ")")
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY "

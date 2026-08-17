@@ -173,6 +173,16 @@
   .card a.title { color: var(--text); text-decoration: none; font-size: .9rem; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .card a.title:hover { color: var(--accent2); }
   .card .meta { color: var(--muted); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .meta .chanlink { cursor: pointer; }
+  .card .meta .chanlink:hover { color: var(--accent2); text-decoration: underline; }
+  /* A channel scope is the one browse filter with no sidebar entry to show it
+     is on, so it announces itself above the grid instead of in the toolbar. */
+  #scopeBanner { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; padding: .7rem .9rem; background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--accent2); border-radius: 10px; }
+  #scopeBanner .sbtext { flex: 1; min-width: 0; }
+  #scopeBanner .sbkind { color: var(--accent2); font-size: .7rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+  #scopeBanner .sbname { display: block; font-size: 1.15rem; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #scopeBanner .sbsub { color: var(--muted); font-size: .78rem; margin-top: .15rem; }
+  #scopeBanner .sbclear { white-space: nowrap; }
   .chips { display: flex; flex-wrap: wrap; gap: .3rem; flex: 1 1 0; min-height: 0; overflow-y: auto; align-content: flex-start; }
   .chip { background: var(--panel2); border: 1px solid var(--border); font-size: .7rem; padding: 1px 8px; border-radius: 999px; color: var(--muted); }
   .chip.suggest { cursor: pointer; color: var(--text); border-color: var(--accent2); }
@@ -309,6 +319,7 @@
         <button id="btnSelect" class="selbtn" title="Pick several videos, then theme them all at once">Select</button>
         <span id="browseTitle"></span>
       </div>
+      <div id="scopeBanner" hidden></div>
       <div id="browseGrid" class="grid"></div>
       <div id="browseSentinel" style="height:1px"></div>
     </div>
@@ -459,6 +470,10 @@
 const $ = (id) => document.getElementById(id);
 let themes = [], activeTheme = null;
 let playlists = [], activePlaylist = null;
+// The third browse scope, alongside a theme and a playlist: {id, title} of one
+// uploader. Local only — it filters the library, it never asks YouTube what
+// else that channel has posted.
+let activeChannel = null;
 
 $("themePick").value = document.documentElement.dataset.theme;
 $("themePick").onchange = (e) => {
@@ -576,7 +591,9 @@ function card(v, extras = {}) {
     <div class="body">
       <a class="title" target="_blank" rel="noopener"
          href="https://www.youtube.com/watch?v=${v.id}">${v.title}</a>
-      <div class="meta">${v.channel_title || ""}</div>
+      <div class="meta">${v.channel_title
+        ? `<span class="chanlink" title="Show this channel's videos in your library">${v.channel_title}</span>`
+        : ""}</div>
       <div class="chips">
         ${(v.themes || []).map(t => `<span class="chip" data-name="${t}">${t}<span class="x" title="Remove this theme">&times;</span></span>`).join("")}
         ${(suggestions || []).map(s =>
@@ -637,6 +654,8 @@ function card(v, extras = {}) {
   el.querySelector(".thumbwrap").onclick = () => {
     openPlayer(v, queue ? { list: queue, idx: queue.findIndex(q => q.id === v.id) } : null);
   };
+  const chanlink = el.querySelector(".meta .chanlink");
+  if (chanlink) chanlink.onclick = () => showChannel(v);
   el.querySelector(".chip.addlist").onclick = (e) => {
     const items = playlists.filter(p => p.kind === "local")
       .map(p => ({ label: p.title || p.id, onclick: () => addToPlaylist(p, v) }));
@@ -1444,16 +1463,17 @@ async function loadThemes() {
   const list = $("themeList");
   list.replaceChildren();
   const all = document.createElement("div");
-  all.className = "theme-item" + (activeTheme === null && !activePlaylist ? " active" : "");
+  all.className = "theme-item" +
+    (activeTheme === null && !activePlaylist && !activeChannel ? " active" : "");
   all.innerHTML = `<span>All videos</span><span class="n">${data.total_videos}</span>`;
-  all.onclick = () => { activeTheme = null; activePlaylist = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
+  all.onclick = () => { activeTheme = null; activePlaylist = null; activeChannel = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
   list.appendChild(all);
   themes.forEach(t => {
     const el = document.createElement("div");
     el.className = "theme-item" + (t.name === activeTheme && !activePlaylist ? " active" : "");
     el.innerHTML = `<span>${t.name}</span>
       <span class="n">${t.video_count}<span class="tren" title="Rename theme (renaming onto an existing theme merges them)">&#9998;</span><span class="pldel" title="Delete theme">&times;</span></span>`;
-    el.onclick = () => { activeTheme = t.name; activePlaylist = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
+    el.onclick = () => { activeTheme = t.name; activePlaylist = null; activeChannel = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
     el.querySelector(".tren").onclick = async (e) => {
       e.stopPropagation();
       const name = prompt("Rename theme (existing name = merge):", t.name);
@@ -1492,7 +1512,7 @@ async function loadPlaylists() {
     el.className = "theme-item" + (activePlaylist && activePlaylist.id === p.id ? " active" : "");
     el.innerHTML = `<span>${p.title || p.id}</span>
       <span class="n">${p.video_count}<span class="pldel" title="Delete playlist">&times;</span></span>`;
-    el.onclick = () => { activePlaylist = p; showTab("Browse"); loadBrowse(); refreshSidebar(); };
+    el.onclick = () => { activePlaylist = p; activeChannel = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
     el.querySelector(".pldel").onclick = async (e) => {
       e.stopPropagation();
       await api(`/playlists/${encodeURIComponent(p.id)}`, { method: "DELETE" });
@@ -1536,11 +1556,61 @@ function showMenu(items, x, y) {
 const BROWSE_PAGE = 200;   // rows fetched per request; grid grows as you scroll
 let browsePager = null;    // { load } for the active filter, or null (no paging)
 
+// Scope the browse grid to one uploader. Reachable from any grid, so it moves
+// to the Browse tab — a channel is a browse filter, not a fourth kind of view.
+// A search would be a lie about what is on screen (search widens back to the
+// whole library), so it is cleared on the way in.
+function showChannel(v) {
+  if (!v.channel_title && !v.channel_id) return;
+  activeChannel = { id: v.channel_id || null, title: v.channel_title || "" };
+  activeTheme = null; activePlaylist = null;
+  $("searchBox").value = "";
+  showTab("Browse"); loadBrowse(); refreshSidebar();
+}
+
+function clearChannel() {
+  activeChannel = null;
+  loadBrowse(); refreshSidebar();
+}
+
+// Spells out what a channel scope is showing. A theme or a playlist lights up
+// in the sidebar, so the grid narrowing is explained; a channel has nothing to
+// light up, and the count on its own reads like the channel's whole output —
+// hence saying, in the header, that this is the local library and nothing more.
+// `count` is null until the first page lands.
+function paintChannelBanner(count) {
+  const banner = $("scopeBanner");
+  banner.hidden = false;
+  banner.replaceChildren();
+  const text = document.createElement("div");
+  text.className = "sbtext";
+  const kind = document.createElement("span");
+  kind.className = "sbkind";
+  kind.textContent = "Channel";
+  const name = document.createElement("span");
+  name.className = "sbname";
+  name.textContent = activeChannel.title || "unnamed channel";
+  const sub = document.createElement("div");
+  sub.className = "sbsub";
+  sub.textContent = count === null
+    ? "Videos from this channel in your library…"
+    : `${count} video${count === 1 ? "" : "s"} from this channel in your library`
+      + " — what you have synced, not everything the channel has posted.";
+  text.append(kind, name, sub);
+  const back = document.createElement("button");
+  back.className = "sbclear";
+  back.textContent = "← All videos";
+  back.title = "Back to the whole library";
+  back.onclick = clearChannel;
+  banner.append(text, back);
+}
+
 async function loadBrowse() {
   const seq = ++browseSeq;  // drop out-of-order responses (fast typing/clicking)
   const unwatched = $("unwatchedOnly").checked;
   const offline = $("offlineOnly").checked;
   const grid = $("browseGrid");
+  $("scopeBanner").hidden = !activeChannel;
 
   if (activePlaylist) {
     browsePager = null;  // playlists are bounded — fetched in one shot
@@ -1555,7 +1625,25 @@ async function loadBrowse() {
   }
 
   let fetchPage, extras = () => ({});
-  if (activeTheme === null) {
+  if (activeChannel) {
+    $("browseTitle").textContent = "";   // the banner says it, and says it louder
+    paintChannelBanner(null);
+    let shown = 0;
+    fetchPage = (offset) => {
+      const params = new URLSearchParams({ limit: BROWSE_PAGE, offset, sort: $("sortBy").value });
+      if (activeChannel.title) params.set("channel", activeChannel.title);
+      if (activeChannel.id) params.set("channel_id", activeChannel.id);
+      if (unwatched) params.set("watched", "false");
+      if ($("unthemedOnly").checked) params.set("unthemed", "true");
+      if (offline) params.set("downloaded", "true");
+      return api(`/videos?${params}`).then(d => {
+        if (!offset) shown = 0;
+        shown += d.videos.length;
+        paintChannelBanner(shown);
+        return d.videos;
+      });
+    };
+  } else if (activeTheme === null) {
     const search = $("searchBox").value.trim();
     $("browseTitle").textContent = search ? `results for “${search}”` : "All videos";
     fetchPage = (offset) => {
@@ -1601,6 +1689,8 @@ function makePager(seq, fetchPage, grid, extras) {
         msg.className = "empty";
         msg.textContent = q
           ? `No videos match “${q}”.`
+          : activeChannel
+          ? `Nothing from ${activeChannel.title || "this channel"} matches these filters.`
           : "Nothing here. Sync a playlist to get started.";
         grid.replaceChildren(msg);
         return;
@@ -1879,7 +1969,7 @@ $("btnNewPlaylist").onclick = async () => {
   if (!title || !title.trim()) return;
   const p = await api("/playlists", { method: "POST",
     body: JSON.stringify({ title: title.trim() }) });
-  activePlaylist = p;
+  activePlaylist = p; activeChannel = null;
   showTab("Browse"); loadBrowse(); refreshSidebar();
   toast(`Playlist created: ${p.title}`);
 };
@@ -1887,9 +1977,9 @@ $("sortBy").onchange = loadBrowse;
 $("searchBox").oninput = () => {
   clearTimeout($("searchBox")._h);
   $("searchBox")._h = setTimeout(() => {
-    // search always covers the whole library, not just the active theme/playlist
-    if (activeTheme !== null || activePlaylist) {
-      activeTheme = null; activePlaylist = null; refreshSidebar();
+    // search always covers the whole library, not just the active scope
+    if (activeTheme !== null || activePlaylist || activeChannel) {
+      activeTheme = null; activePlaylist = null; activeChannel = null; refreshSidebar();
     }
     loadBrowse();
   }, 250);

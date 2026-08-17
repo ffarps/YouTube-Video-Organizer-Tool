@@ -153,13 +153,19 @@ def list_videos(
     watched: Optional[bool] = None,
     unthemed: Optional[bool] = None,
     downloaded: Optional[bool] = None,
+    channel: Optional[str] = None,
+    channel_id: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
     conn: sqlite3.Connection = Depends(get_db),
 ):
-    """Browse/search the whole library, across themes."""
+    """Browse/search the whole library, across themes.
+
+    `channel`/`channel_id` narrow to one uploader — what the library already
+    holds, not what the channel has on YouTube."""
     videos = db.list_videos(
-        conn, search, sort, watched, unthemed, downloaded, limit, offset
+        conn, search, sort, watched, unthemed, downloaded,
+        channel=channel, channel_id=channel_id, limit=limit, offset=offset,
     )
     theme_map = db.themes_for_videos(conn, [v["id"] for v in videos])
     for video in videos:

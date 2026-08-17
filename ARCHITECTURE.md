@@ -30,7 +30,12 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   Browse search (`list_videos`) uses the `search_hit` SQL function, not LIKE:
   every typed word must match at a word start (3+ chars match prefixes,
   shorter ones whole words), URLs are stripped from descriptions first, and
-  title/channel hits sort above description-only ones.
+  title/channel hits sort above description-only ones. `list_videos` also
+  takes a `channel`/`channel_id` filter, matched as **id OR name**: a yt-dlp
+  row can carry the name and no id, and a channel that renames leaves its old
+  name on everything ingested before the rename, so either test alone shows
+  half the channel. It is not the same query as typing the name in the search
+  box, which matches descriptions too and so drags in other channels.
 - `app/ingest/urls.py` — URL → id canonicalization; `classify_url` decides
   video/playlist/channel/watch_later.
 - `app/ingest/sync.py` — orchestrator; only fetches metadata for ids not
@@ -203,7 +208,18 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   host keeps a 16/9 box on a screen that isn't. Neither route does anything
   for the window on its own; the desktop shell is what makes it the whole
   screen. Download state polls `/downloads` only while something is in flight
-  and repaints individual cards, never the grid (scroll position).
+  and repaints individual cards, never the grid (scroll position). The channel
+  name on a card is a link into a third browse scope, `activeChannel`, sitting
+  alongside `activeTheme` and `activePlaylist` — all three are mutually
+  exclusive, and a search clears whichever is set because search always widens
+  to the whole library. It scopes the grid to **what the library already
+  holds**: clicking a channel deliberately does *not* ask YouTube what else
+  that channel has posted. Listing a channel's uploads live would put cards on
+  screen with no theme, watch state, rating or offline copy — a second kind of
+  card that every downstream feature would then have to special-case — and
+  ingesting them instead means a 4,000-video channel swamping a library that
+  is meant to be curated. Syncing a channel URL is still the way in, one
+  deliberate act rather than a side effect of a click.
 
 ## Conventions
 
