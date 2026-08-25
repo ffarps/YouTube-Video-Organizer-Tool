@@ -189,6 +189,13 @@
   #rateCard .rc-actions button { font-size: .82rem; }
   #rateNext { background: var(--accent2); border-color: var(--accent2); color: #fff; }
   #rateNext:hover { filter: brightness(1.1); }
+  #rateWatched.on { border-color: var(--ok); color: var(--ok); }
+  #rateCard .rc-actions button:disabled { opacity: .75; cursor: default; }
+  #rateExtra { margin: -.35rem 0 .8rem; }
+  #rateExtra[hidden] { display: none; }
+  #rateDownload { font-size: .82rem; border-color: var(--ok); color: var(--ok); }
+  #rateDownload:hover:not(:disabled) { border-color: var(--ok); filter: brightness(1.2); }
+  #rateDownload:disabled { opacity: .7; cursor: default; color: var(--muted); border-color: var(--border); }
   #playerActions { display: flex; align-items: center; gap: .8rem; padding: .55rem .8rem; flex: none; }
   #playerYt { margin-left: auto; color: var(--accent2); font-size: .85rem; text-decoration: none; }
   .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.8); color: #fff; padding: 1px 6px; border-radius: 5px; font-size: .75rem; }
@@ -490,6 +497,9 @@
             <button class="vote-big down" data-vote="-1"><span>&#128078;</span>Not for me</button>
             <button class="vote-big up" data-vote="1"><span>&#128077;</span>More like this</button>
           </div>
+          <div id="rateExtra" hidden>
+            <button id="rateDownload">&#11015; Save a copy &mdash; best quality</button>
+          </div>
           <div id="nextUp" hidden>
             <div class="nu-label">Up next</div>
             <div class="nu-title" id="nextTitle"></div>
@@ -498,6 +508,7 @@
           </div>
           <div class="rc-actions">
             <button id="rateNext" hidden>Play next &#9654;</button>
+            <button id="rateWatched">Mark watched</button>
             <button id="rateDismiss">Close</button>
           </div>
         </div>
@@ -851,6 +862,7 @@ function syncCardsFromDl() {
     }
     paintDl(el);
   });
+  if (doneMode) paintRateDownload();  // the end panel offers a download too
   for (const row of dlLive.values()) {
     if (row.status === "queued" || row.status === "downloading") anyActive = true;
   }
@@ -1134,7 +1146,8 @@ async function voteFromCard(n) {
   paintVote(n);
   $("rateTitle").textContent = n ? "Thanks!" : "How was it?";
   $("rateSub").textContent = voteLabel(n);
-  await saveVote(n);
+  await saveVote(n);   // sets rating and watch_status on the video object
+  paintRateState();
 }
 
 // only reached once the video is actually over: the frame is spent, so we can
@@ -1150,6 +1163,7 @@ function enterDoneMode() {
   if (playingVideo.rating) $("rateSub").textContent = voteLabel(playingVideo.rating);
   else $("rateSub").textContent = next
     ? "Vote, or let it move on by itself" : "Skip the vote if it was just okay";
+  paintRateState();
   if (next) {
     $("nextTitle").textContent = next.title;
     $("nextUp").hidden = false;
@@ -1166,6 +1180,39 @@ function enterDoneMode() {
 function hideRateCard() {
   $("rateCard").classList.remove("show");
   $("nextUp").hidden = true;
+  $("rateExtra").hidden = true;
+}
+
+// The panel reports as much as it asks: finishing a video marks it watched by
+// itself, so the button is a receipt when there is nothing left to press.
+function paintRateState() {
+  const v = playingVideo;
+  if (!v) return;
+  const done = v.watch_status === "watched";
+  const btn = $("rateWatched");
+  btn.textContent = done ? "Watched ✓" : "Mark watched";
+  btn.classList.toggle("on", done);
+  btn.disabled = done;
+  paintRateDownload();
+}
+
+// Liking something is the moment you would want to keep it, so the offer to
+// save a copy rides along with the thumbs up instead of hiding in the card
+// menu. Best available means best available: `best` is the same no-ceiling
+// request the context menu sends, not this machine's default height.
+function paintRateDownload() {
+  const v = playingVideo;
+  const row = $("rateExtra"), btn = $("rateDownload");
+  if (!v || (v.rating || 0) <= 0) { row.hidden = true; return; }
+  // The live table is ahead of the video object while a job is running.
+  const live = dlLive.get(v.id);
+  const status = live ? live.status : v.download_status;
+  row.hidden = false;
+  btn.disabled = true;
+  if (status === "done") btn.textContent = "▣ Saved on this machine";
+  else if (status === "queued" || status === "downloading") btn.textContent = "⬇ Saving…";
+  else if (status === "error") { btn.textContent = "⚠ Failed — try again"; btn.disabled = false; }
+  else { btn.textContent = "⬇ Save a copy — best quality"; btn.disabled = false; }
 }
 
 // The vote pill only needs a duration and a position, and both the YouTube
@@ -1311,6 +1358,17 @@ $("rateVote").querySelectorAll(".vote-big").forEach(b =>
   b.onclick = () => voteFromCard(+b.dataset.vote));
 $("rateNext").onclick = () => { stopCountdown(); advanceQueue(); };
 $("rateDismiss").onclick = () => { stopCountdown(); closePlayer(); };
+$("rateWatched").onclick = async () => {
+  bumpCountdown();
+  if (playingVideo && playingVideo.watch_status !== "watched") await markWatched(playingVideo);
+  paintRateState();
+};
+$("rateDownload").onclick = async () => {
+  bumpCountdown();
+  if (!playingVideo) return;
+  await startDownload(playingVideo, { best: true });
+  paintRateDownload();
+};
 // The mouse on the panel means someone is deciding. It used to cancel the
 // auto-advance outright, which made the whole thing look broken whenever the
 // pointer simply happened to be resting over the middle of the video — so it
