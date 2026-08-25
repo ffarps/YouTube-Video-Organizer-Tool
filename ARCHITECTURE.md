@@ -18,6 +18,7 @@ uvicorn app.main:app --reload    # same app as a web page: :8000/, API docs at /
 start.bat                        # Windows one-click: installs deps if missing, opens the window
 start.bat browser                # ...the old way instead: console + browser + --reload
 python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy import
+python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serves
 ```
 
 ## Architecture

@@ -115,4 +115,6 @@ standing in for the stdout that no longer exists.
 - Scheduled re-sync in the background instead of on demand.
 - Export a theme or playlist back to a real YouTube playlist.
 - LLM naming for discovered clusters.
-- Detect videos that have gone private or been deleted upstream.
+- Detecting videos gone private or deleted upstream is
+  `scripts/find_unavailable.py` — a script rather than a feature, because a
+  2,452-video library had three of them.
