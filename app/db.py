@@ -140,6 +140,11 @@ def connect(path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # A connection per request (see `get_db`) means two of them can want the
+    # write lock in the same instant. Without a timeout the second one raises
+    # "database is locked" rather than waiting out the millisecond the first
+    # one needs.
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.create_function("search_hit", 3, search_hit, deterministic=True)
     return conn
 

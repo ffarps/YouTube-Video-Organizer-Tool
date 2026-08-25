@@ -101,7 +101,10 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   instead of accepting a request for 4K and returning 360p.
 - `app/downloads.py` — job manager: thread per download so the request
   returns immediately, live byte counts in memory (`_active`), durable
-  status in the `downloads` table. `reset_stale` runs in the lifespan
+  status in the `downloads` table. The worker opens its **own** connection
+  from `db_path`: it writes minutes after the request that started it has
+  gone, so it can neither borrow that request's connection nor share one with
+  whatever the UI is doing by then (see `get_db`). `reset_stale` runs in the lifespan
   because nothing survives a restart. `media_file` is the filesystem
   boundary — it refuses paths that escape MEDIA_PATH. A re-download
   removes the old file only *after* the new one lands, and restores the
@@ -149,8 +152,24 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   Offline copies are the same idea from the other side, so `list_videos`
   and `videos_by_theme` take a `downloaded` filter (only `status='done'`
   counts — a queued or failed row has no file behind it).
-- `app/api/routes.py` — all endpoints; DB connection lives on
-  `app.state.db` (set in the lifespan in `app/main.py`). Downloaded files
+- `app/api/routes.py` — all endpoints; `get_db` opens a **connection per
+  request** and closes it when the request ends. One shared connection on
+  `app.state.db` is what it used to hand out, and that is a race, not a
+  saving: FastAPI runs these sync endpoints in a threadpool, so two requests
+  reach the same connection in the same instant and sqlite3 raises
+  `InterfaceError: bad parameter or other API misuse` from whichever statement
+  lost — a 500 out of code with nothing wrong in it. It went unnoticed because
+  it needs two writes in the same moment, and the app has exactly one such
+  moment: a video ends, the mark-watched PATCH and the next video's play
+  counter go out together, one of them dies, and the video you just finished is
+  still sitting in the unwatched list. `test_a_watched_write_survives_a_
+  simultaneous_play_counter` reproduces it — it fails with the real
+  `InterfaceError` on the shared connection. WAL (already on) plus
+  `busy_timeout` is what makes several connections to one file cheap; a
+  connection to a local file costs microseconds. Threads that outlive their
+  request must open their own (`downloads.start(db_path=...)`), and
+  `app.state.db` stays only for startup work and for tests reaching past the
+  API. Downloaded files
   are served by a `StaticFiles` mount at `/media`, NOT a FileResponse
   endpoint — StaticFiles answers Range requests, which is what makes
   seeking work in a local `<video>`. Deleting a video unlinks its media

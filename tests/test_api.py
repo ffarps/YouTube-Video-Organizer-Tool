@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -229,6 +230,43 @@ def test_watch_state_and_filtering(client):
 
     assert client.patch("/videos/missing00id/watch-state", json={"status": "watched"}).status_code == 404
     assert client.patch("/videos/guitar000ok/watch-state", json={}).status_code == 400
+
+
+def test_a_watched_write_survives_a_simultaneous_play_counter(client):
+    """The end of a video sends two writes at once, and they used to collide.
+
+    Both endpoints ran off one shared sqlite connection out of FastAPI's
+    threadpool, so a pair landing in the same instant raced and sqlite3 raised
+    "bad parameter or other API misuse" from whichever lost. That 500 dropped
+    the mark-watched write at exactly the moment it mattered, leaving a video
+    you had just finished sitting in the unwatched list.
+    """
+    client.post("/videos", json={"url": "guitar000ok"})
+    client.post("/videos", json={"url": "aivideo00ok"})
+    failures = []
+
+    def call(send):
+        try:
+            response = send()
+            if response.status_code != 200:
+                failures.append((response.status_code, response.text[:200]))
+        except Exception as e:                      # a raised InterfaceError
+            failures.append(repr(e))
+
+    threads = []
+    for _ in range(10):
+        threads.append(threading.Thread(target=call, args=(
+            lambda: client.patch("/videos/guitar000ok/watch-state",
+                                 json={"status": "watched"}),)))
+        threads.append(threading.Thread(target=call, args=(
+            lambda: client.post("/videos/aivideo00ok/play"),)))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert failures == []
+    assert client.get("/videos/guitar000ok").json()["watch_status"] == "watched"
 
 
 def test_vote_is_thumbs_and_clearable(client):

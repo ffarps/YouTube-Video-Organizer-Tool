@@ -2,7 +2,7 @@ import json
 import queue
 import sqlite3
 import threading
-from typing import Optional
+from typing import Iterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -36,8 +36,28 @@ from app.recommend import engine
 router = APIRouter()
 
 
-def get_db(request: Request) -> sqlite3.Connection:
-    return request.app.state.db
+def get_db(settings: Settings = Depends(get_settings)) -> Iterator[sqlite3.Connection]:
+    """A connection of this request's own, closed when the request ends.
+
+    One shared connection looked harmless and was not: FastAPI runs these sync
+    endpoints in a threadpool, so two requests reach it in the same instant and
+    sqlite3 raises `InterfaceError: bad parameter or other API misuse` from
+    whichever statement lost — a 500 out of code that has nothing wrong with
+    it. It cost the write that matters most at exactly the moment it mattered:
+    a video ends, the mark-watched PATCH and the next video's play counter go
+    out together, one of them dies, and the video you just finished is still
+    sitting in the unwatched list. Connections to a local file are cheap. The
+    shared one was not.
+
+    Background threads outlive the request that started them and must open
+    their own (see `downloads.start`); `app.state.db` stays for startup work
+    and for tests that reach past the API.
+    """
+    conn = db.connect(settings.database_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 @router.get("/diagnostics/stacks", response_class=PlainTextResponse)
@@ -530,6 +550,7 @@ def start_download(
             conn,
             video_id,
             settings.media_dir(),
+            db_path=settings.database_path,
             # None = no ceiling, i.e. whatever this video actually has.
             max_height=None if body.best
             else (body.max_height or settings.download_max_height),

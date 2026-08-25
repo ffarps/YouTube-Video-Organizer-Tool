@@ -138,11 +138,15 @@ def start(
     audio_only: bool = False,
     cookies_browser: Optional[str] = None,
     player_client: Optional[str] = None,
+    db_path: Optional[str] = None,
 ) -> dict:
     """Queue a download and return once the worker thread is running.
 
     `max_height=None` means "the best this video offers". Raises DownloadBusy
-    if this video is already in flight.
+    if this video is already in flight. `db_path` is what the worker opens its
+    own connection from: it writes minutes after the request that started it
+    has ended, so it can neither borrow that connection nor share one with
+    whatever the UI is doing by then.
     """
     with _lock:
         if video_id in _active:
@@ -164,6 +168,7 @@ def start(
                 _active[video_id] = event
 
     def run() -> None:
+        worker = db.connect(db_path) if db_path else conn
         try:
             log.info(
                 "download start %s (max_height=%s audio_only=%s)",
@@ -171,7 +176,7 @@ def start(
                 max_height,
                 audio_only,
             )
-            db.mark_download_running(conn, video_id)
+            db.mark_download_running(worker, video_id)
             result = ytdl.download_video(
                 video_id,
                 media_dir,
@@ -182,7 +187,7 @@ def start(
                 progress=on_progress,
             )
             db.mark_download_done(
-                conn,
+                worker,
                 video_id,
                 result["filename"],
                 result["size_bytes"],
@@ -204,13 +209,15 @@ def start(
             # The row keeps one line for the UI; the traceback only exists here.
             log.exception("download failed %s: %s", video_id, message)
             if previous:
-                db.restore_download(conn, video_id, previous, message)
+                db.restore_download(worker, video_id, previous, message)
             else:
-                db.mark_download_failed(conn, video_id, message)
+                db.mark_download_failed(worker, video_id, message)
         finally:
             _clean_partials(media_dir, video_id)
             with _lock:
                 _active.pop(video_id, None)
+            if worker is not conn:
+                worker.close()
 
     threading.Thread(target=run, daemon=True, name=f"download-{video_id}").start()
     return {
