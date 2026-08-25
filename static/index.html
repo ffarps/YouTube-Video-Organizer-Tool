@@ -1045,12 +1045,23 @@ function loadYtApi() {
 async function markWatched(video) {
   // Set locally first, the way saveVote does: the end panel and the auto-advance
   // both read this back immediately, and a round trip later is too late to be
-  // the thing they paint from.
+  // the thing they paint from. But a write that fails must not leave the app
+  // claiming otherwise — a dropped PATCH is precisely how a finished video ends
+  // up back in the unwatched list with nothing on screen having said so.
+  const before = video.watch_status;
   video.watch_status = "watched";
-  await api(`/videos/${video.id}/watch-state`, { method: "PATCH",
-    body: JSON.stringify({ status: "watched" }) });
+  try {
+    await api(`/videos/${video.id}/watch-state`, { method: "PATCH",
+      body: JSON.stringify({ status: "watched" }) });
+  } catch (e) {
+    video.watch_status = before;
+    if (doneMode) paintRateState();
+    toast(`Could not mark watched: ${e.message}`, 6000);
+    return false;
+  }
   toast(`Marked watched: ${video.title}`);
   refreshCurrent();
+  return true;
 }
 
 // --- voting: a corner pill while it plays, a panel once it's over ---------
