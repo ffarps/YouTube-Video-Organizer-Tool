@@ -186,8 +186,12 @@
   #scopeBanner .sbtext { flex: 1; min-width: 0; }
   #scopeBanner .sbkind { color: var(--accent2); font-size: .7rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
   #scopeBanner .sbname { display: block; font-size: 1.15rem; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #scopeBanner .sbsub { color: var(--muted); font-size: .78rem; margin-top: .15rem; }
+  #scopeBanner .sbsub { color: var(--muted); font-size: .78rem; margin-top: .15rem; min-height: 1.1em; }
   #scopeBanner .sbclear { white-space: nowrap; }
+  /* An id selector outranks the UA's `[hidden] { display: none }`, so without
+     this the bar is painted for every scope: empty at startup, and still
+     naming the last channel after you have gone back to the whole library. */
+  #scopeBanner[hidden] { display: none; }
   .chips { display: flex; flex-wrap: wrap; gap: .3rem; flex: 1 1 0; min-height: 0; overflow-y: auto; align-content: flex-start; }
   .chip { background: var(--panel2); border: 1px solid var(--border); font-size: .7rem; padding: 1px 8px; border-radius: 999px; color: var(--muted); }
   .chip.suggest { cursor: pointer; color: var(--text); border-color: var(--accent2); }
@@ -1613,6 +1617,11 @@ function clearChannel() {
 // `count` is null until the first page lands.
 function paintChannelBanner(count) {
   const banner = $("scopeBanner");
+  // Called from an in-flight response, so the scope it was asked about can
+  // already be gone. Repainting then hangs a stale channel over the whole
+  // library — and since the render reads `activeChannel.title`, a null one
+  // throws after `replaceChildren`, leaving the empty strip behind.
+  if (!activeChannel) { banner.hidden = true; return; }
   banner.hidden = false;
   banner.replaceChildren();
   const text = document.createElement("div");
@@ -1626,9 +1635,8 @@ function paintChannelBanner(count) {
   const sub = document.createElement("div");
   sub.className = "sbsub";
   sub.textContent = count === null
-    ? "Videos from this channel in your library…"
-    : `${count} video${count === 1 ? "" : "s"} from this channel in your library`
-      + " — what you have synced, not everything the channel has posted.";
+    ? ""
+    : `${count} video${count === 1 ? "" : "s"}`;
   text.append(kind, name, sub);
   const back = document.createElement("button");
   back.className = "sbclear";
@@ -1672,7 +1680,9 @@ async function loadBrowse() {
       return api(`/videos?${params}`).then(d => {
         if (!offset) shown = 0;
         shown += d.videos.length;
-        paintChannelBanner(shown);
+        // Same guard the grid gets: a page that lands after the scope changed
+        // must not put its count — or its banner — back on screen.
+        if (seq === browseSeq) paintChannelBanner(shown);
         return d.videos;
       });
     };

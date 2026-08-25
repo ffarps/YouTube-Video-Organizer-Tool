@@ -275,7 +275,13 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   card that every downstream feature would then have to special-case — and
   ingesting them instead means a 4,000-video channel swamping a library that
   is meant to be curated. Syncing a channel URL is still the way in, one
-  deliberate act rather than a side effect of a click.
+  deliberate act rather than a side effect of a click. A theme and a playlist
+  light up in the sidebar to explain why the grid shrank; a channel has no
+  sidebar entry, so `#scopeBanner` says so above the grid instead — and it
+  needs its own `#scopeBanner[hidden]` rule, since the id selector setting
+  `display: flex` outranks the UA's `[hidden]` (the same trap as
+  `iframe[hidden]` above): without it the bar is painted in every scope, empty
+  at startup and still naming the last channel once you have left it.
 
 ## Conventions
 
