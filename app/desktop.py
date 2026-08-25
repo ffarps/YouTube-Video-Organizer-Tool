@@ -39,6 +39,9 @@ log = logging.getLogger("watchlog.desktop")
 # Matches --bg of the app's default (dark) theme, so opening the window doesn't
 # flash white before the page paints.
 BACKGROUND = "#0f1115"
+# The window's own icon. The same file the page and the Desktop shortcut use,
+# so all three faces of the app agree.
+ICON = ROOT / "static" / "favicon.ico"
 
 
 def _start_logging() -> Path:
@@ -193,6 +196,72 @@ def _main_window_handle() -> Optional[int]:
 
     user32.EnumWindows(visit, 0)
     return best[0]
+
+
+def _set_app_id(app_id: str = "Watchlog.Desktop") -> None:
+    """Tell Windows this process is Watchlog, not Python.
+
+    Without an explicit AppUserModelID the taskbar identifies the app by the
+    executable that started it, so the button inherits pythonw.exe's identity:
+    its icon, its grouping (every other pythonw app in the same button), and a
+    pin that would relaunch the interpreter rather than this app. Must run
+    before the first window exists — Windows reads it when the window is
+    created, and changing it afterwards does nothing.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:  # cosmetic — never worth failing the launch over
+        log.exception("could not set the taskbar app id")
+
+
+def _apply_window_icon(path: Path = ICON) -> None:
+    """Put the app's icon on the window and its taskbar button.
+
+    pywebview's WebView2 backend exposes no icon option on Windows — `icon=`
+    on `webview.start()` is GTK/Qt only — so the window keeps whatever the
+    launching executable had, which under `pythonw -m app.desktop` is the
+    Python logo. WM_SETICON is the way in, and it wants two handles, not one:
+    ICON_SMALL is the title bar and Alt+Tab, ICON_BIG the taskbar button. Each
+    is loaded at its own metric so Windows picks the right frame out of the
+    .ico instead of scaling one down twice.
+    """
+    if sys.platform != "win32" or not path.is_file():
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    WM_SETICON, ICON_SMALL, ICON_BIG = 0x0080, 0, 1
+    IMAGE_ICON, LR_LOADFROMFILE = 1, 0x0010
+    SM_CXSMICON, SM_CYSMICON, SM_CXICON, SM_CYICON = 49, 50, 11, 12
+
+    user32 = ctypes.windll.user32
+    user32.LoadImageW.restype = wintypes.HANDLE
+    user32.SendMessageW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+    ]
+
+    hwnd = _main_window_handle()
+    if not hwnd:
+        log.warning("no window to put the icon on")
+        return
+    for which, cx, cy in (
+        (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
+        (ICON_BIG, SM_CXICON, SM_CYICON),
+    ):
+        handle = user32.LoadImageW(
+            None, str(path), IMAGE_ICON,
+            user32.GetSystemMetrics(cx), user32.GetSystemMetrics(cy),
+            LR_LOADFROMFILE,
+        )
+        if not handle:
+            log.warning("could not load %s as an icon", path)
+            return
+        user32.SendMessageW(hwnd, WM_SETICON, which, handle)
+    log.info("window icon set from %s", path)
 
 
 def _start_watchdog(interval: float = 10.0, heartbeat: float = 300.0) -> None:
@@ -469,6 +538,8 @@ def _open_window(url: str) -> bool:
         """
         window.show()
         window.restore()
+        # After show(): the HWND has to exist before it can be given an icon.
+        _apply_window_icon()
 
     log.info("window backend: pywebview (fullscreen bridge active)")
     # private_mode=False + storage_path: the colour theme lives in
@@ -558,6 +629,7 @@ def run(port: Optional[int] = None) -> int:
         port = int(env_port) if env_port else _pick_port()
 
     log.info("desktop start: port=%s python=%s", port, sys.executable)
+    _set_app_id()
     _start_watchdog()
     server, thread = _start_server(port)
     stamp = _asset_stamp()

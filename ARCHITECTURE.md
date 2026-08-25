@@ -193,7 +193,18 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   launcher's show state to the first window a process opens — a hidden or
   minimized launch is otherwise indistinguishable from a crash. pywebview's
   `private_mode` default would drop the localStorage colour theme every run,
-  hence `storage_path`. **WebView2 has no fullscreen of its own** — its
+  hence `storage_path`. The window's **icon** is a third thing the backend
+  won't do: `webview.start(icon=...)` is GTK/Qt only, so on Windows the window
+  keeps whatever the launching exe had — the Python logo, under `pythonw -m
+  app.desktop`. `_apply_window_icon` sends `WM_SETICON` with two handles
+  (ICON_SMALL is the title bar and Alt+Tab, ICON_BIG the taskbar button), each
+  loaded at its own `GetSystemMetrics` size so Windows picks a frame out of
+  `static/favicon.ico` instead of rescaling one. It runs from `reveal()`,
+  after `show()`, since there is no HWND before that. `_set_app_id` is the
+  other half and must run *before* the first window exists: without an
+  explicit AppUserModelID the taskbar identifies the app by its executable, so
+  the button groups with every other pythonw process and a pin relaunches the
+  interpreter. **WebView2 has no fullscreen of its own** — its
   backend implements none, so `requestFullscreen()` grows the element to fill
   the webview and stops at the window's edge, title bar included. The window
   is the only thing that can go fullscreen, so `_bind_fullscreen` exposes
