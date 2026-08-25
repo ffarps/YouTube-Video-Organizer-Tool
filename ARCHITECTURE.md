@@ -238,7 +238,35 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   counts the *video* down and names what follows, so the panel at the end is
   never a surprise. Deliberately no auto-fade, unlike the vote pill — its job
   is to still be there when the video ends — and it withdraws if you seek
-  back, since `remaining` is recomputed every tick. Both corner overlays sit
+  back, since `remaining` is recomputed every tick. `#npCount` blinks over the
+  last 5s, because a number nobody looks at is the same as no warning at all.
+  The end panel is where the whole decision lives: the two votes, an explicit
+  `#rateWatched` that spends most of its life as a receipt (finishing a video
+  marks it watched by itself), and `#rateDownload`, which appears only behind a
+  thumbs up — liking something is the moment you would want to keep it — and
+  asks for `best: true`, the same no-ceiling request the card menu sends. From
+  there it moves on by itself: `startCountdown` runs `NEXT_DELAY` down inside
+  `#nextUp`, where the next title is already being read, pulsing the number each
+  second and draining `#nuBar`, and `fireCountdown` flashes "Playing next…" a
+  beat before it actually goes. Resting the mouse on the panel **pauses** it and
+  says so — cancelling outright is what it used to do, and a pointer that merely
+  happened to be sitting over the middle of the video then killed the
+  auto-advance silently, which is indistinguishable from it being broken. Any
+  press inside the panel buys the full delay back (`bumpCountdown`), so voting
+  or starting a download is never cut off by the advance it interrupted.
+  `endLead` is one definition of "the closing stretch" read two ways: how far
+  out `#nextPill` starts warning, and — through `nearEnd` — how much of a video
+  can be left when skipping it still counts as having watched it. `advanceQueue`
+  marks the outgoing video watched inside that window and deliberately leaves it
+  alone outside it (an early skip really is "not now"): a skip used to record
+  the play counter and nothing else, so a video abandoned three seconds from the
+  end came back as unwatched and had to be marked by hand. An *automatic*
+  advance also raises `#backPill` for 15s — nothing on screen asked for the
+  video to change, so the way back has to be visible rather than remembered —
+  and `#playerPrev` in the action row is the same move for as long as the queue
+  has something behind it. `#playerNext` beside it is the opposite number, a
+  skip forward from mid-video; both go through `advanceQueue`, so the
+  closing-stretch rule applies to them exactly as it does to the automatic one. The corner overlays sit
   in `#cornerStack`, one flex column, so they stack instead of landing on top
   of each other — and `syncOverlayLayer` lifts that column into the **top
   layer** as a manual popover whenever the *iframe* is the fullscreen element.

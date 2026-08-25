@@ -156,6 +156,17 @@
   /* the last few seconds: the number stops being scenery */
   #npCount.urgent { color: var(--accent2); font-weight: 700; animation: countFlash .9s ease-in-out infinite; }
   @keyframes countFlash { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  /* Shown for a while after an *automatic* advance. The video changed without
+     anyone asking for it, so the way back has to be on screen, not remembered. */
+  #backPill { display: flex; align-items: center; gap: .6rem; max-width: min(420px, 60%);
+    padding: .4rem .5rem .4rem .85rem; border-radius: 999px; background: rgba(10,12,16,.88);
+    border: 1px solid rgba(255,255,255,.15); box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    backdrop-filter: blur(6px); opacity: 0; transform: translateY(10px); transition: opacity .28s, transform .28s; }
+  #backPill[hidden] { display: none; }
+  #backPill.show { opacity: 1; transform: none; }
+  #bpText { font-size: .82rem; color: #b9c0cc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bpBack { flex: none; font-size: .78rem; padding: .3rem .6rem; border-radius: 999px;
+    background: rgba(255,255,255,.12); border-color: transparent; color: #e6e9ef; }
   /* the end-of-video panel: only ever shown once the video is actually over,
      so the frame is already spent — solid black, centered */
   #rateCard { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 1.2rem;
@@ -475,6 +486,10 @@
       <div id="ytplayer"></div>
       <video id="localPlayer" controls playsinline hidden></video>
       <div id="cornerStack">
+        <div id="backPill" hidden>
+          <span id="bpText"></span>
+          <button id="bpBack">&#9664; Back</button>
+        </div>
         <div id="votePill" hidden>
           <span id="vpLabel">How was it?</span>
           <button class="vote-mini down" data-vote="-1" title="Not for me">&#128078;</button>
@@ -515,6 +530,8 @@
       </div>
     </div>
     <div id="playerActions">
+      <button id="playerPrev" hidden title="Back to the previous video in this list">&#9664; previous</button>
+      <button id="playerNext" hidden title="Skip to the next video in this list">next &#9654;</button>
       <button id="playerWatched">mark watched</button>
       <a id="playerYt" target="_blank" rel="noopener">open on YouTube &#8599;</a>
     </div>
@@ -1041,6 +1058,10 @@ function hasNextInQueue() {
   return !!(playQueue && playQueue.list[playQueue.idx + 1]);
 }
 
+function hasPrevInQueue() {
+  return !!(playQueue && playQueue.idx > 0 && playQueue.list[playQueue.idx - 1]);
+}
+
 function voteLabel(n) {
   return n > 0 ? "More like this" : n < 0 ? "Not for me" : "";
 }
@@ -1157,6 +1178,7 @@ function enterDoneMode() {
   doneMode = true;
   hideVotePill();
   hideNextPill();
+  hideBackPill();
   paintVote(playingVideo.rating || 0);
   const next = hasNextInQueue() ? playQueue.list[playQueue.idx + 1] : null;
   $("rateTitle").textContent = playingVideo.rating ? "Thanks!" : "How was it?";
@@ -1270,6 +1292,47 @@ function advanceQueue(auto = false) {
   if (leaving && leaving.watch_status !== "watched" && nearEnd()) markWatched(leaving);
   playQueue.idx += 1;
   openPlayer(playQueue.list[playQueue.idx], playQueue);
+  // openPlayer clears the corner overlays synchronously, before its first
+  // await, so the way back goes up after it rather than before.
+  if (auto && leaving) showBackPill(leaving);
+}
+
+// The way back out of an automatic advance: the same queue, one step back, so
+// the video that just started is still ahead of you.
+function goBack() {
+  if (!hasPrevInQueue()) return;
+  stopCountdown();
+  hideBackPill();
+  playQueue.idx -= 1;
+  openPlayer(playQueue.list[playQueue.idx], playQueue);
+}
+
+function showBackPill(prev) {
+  const pill = $("backPill");
+  $("bpText").textContent = "Playing the next video";
+  $("bpBack").title = `Back to: ${prev.title}`;
+  clearTimeout(backTimer);
+  if (pill.hidden) {
+    pill.hidden = false;
+    void pill.offsetWidth;  // flush hidden->flex so the fade runs, as the other pills do
+  }
+  pill.classList.add("show");
+  // Long enough to notice the switch and change your mind about it; the
+  // `previous` button in the action row is the way back after that.
+  backTimer = setTimeout(hideBackPill, 15000);
+}
+
+function hideBackPill() {
+  clearTimeout(backTimer);
+  const pill = $("backPill");
+  if (pill.hidden) return;
+  pill.classList.remove("show");
+  backTimer = setTimeout(() => { pill.hidden = true; }, 300);  // after the fade
+}
+
+function syncQueueButtons() {
+  $("playerPrev").hidden = !hasPrevInQueue();
+  $("playerNext").hidden = !hasNextInQueue();
 }
 
 // Once the video is over it moves on by itself, visibly: the seconds tick down
@@ -1375,6 +1438,11 @@ $("rateDownload").onclick = async () => {
 // pauses instead, says so, and picks up again when you move away.
 $("rateInner").onmouseenter = () => setCountdownPaused(true);
 $("rateInner").onmouseleave = () => setCountdownPaused(false);
+$("bpBack").onclick = goBack;
+$("playerPrev").onclick = goBack;
+// Skipping forward by hand runs the same path the auto-advance does, so a
+// video left in its closing stretch is still marked watched on the way out.
+$("playerNext").onclick = () => { stopCountdown(); advanceQueue(); };
 
 // the "next in line" is the following card in whatever grid you played from,
 // unless an explicit queue (e.g. a playlist) was handed in
@@ -1408,6 +1476,8 @@ async function openPlayer(v, queue = null) {
   hideRateCard();
   hideVotePill();
   hideNextPill();
+  hideBackPill();
+  syncQueueButtons();
   $("playerTitle").textContent = v.title;
   $("playerYt").href = `https://www.youtube.com/watch?v=${v.id}`;
   $("playerModal").hidden = false;
@@ -1648,6 +1718,9 @@ function closePlayer() {
   hideRateCard();
   hideVotePill();
   hideNextPill();
+  hideBackPill();
+  $("playerPrev").hidden = true;
+  $("playerNext").hidden = true;
   doneMode = false;
   playingVideo = null;
   playQueue = null;
