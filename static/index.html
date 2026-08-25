@@ -153,6 +153,9 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #npNow { flex: none; font-size: .78rem; padding: .3rem .6rem; border-radius: 999px;
     background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  /* the last few seconds: the number stops being scenery */
+  #npCount.urgent { color: var(--accent2); font-weight: 700; animation: countFlash .9s ease-in-out infinite; }
+  @keyframes countFlash { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   /* the end-of-video panel: only ever shown once the video is actually over,
      so the frame is already spent — solid black, centered */
   #rateCard { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 1.2rem;
@@ -165,6 +168,16 @@
   #nextUp { margin: .1rem 0 .85rem; padding: .5rem .7rem; border: 1px solid var(--border); border-radius: 10px; background: var(--panel2); }
   #nextUp .nu-label { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   #nextUp .nu-title { font-size: .9rem; font-weight: 600; margin-top: .15rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The auto-advance counts down where you are already looking, and the number
+     moves every second so it reads as running rather than as a static label. */
+  #nuCount { margin-top: .45rem; font-size: .8rem; color: var(--muted); }
+  #nuCount b { display: inline-block; font-size: 1rem; color: var(--text); font-variant-numeric: tabular-nums; }
+  #nuCount.tick b { animation: nuTick .5s ease-out; }
+  @keyframes nuTick { from { transform: scale(1.5); color: var(--accent2); } to { transform: scale(1); } }
+  /* ...and says the move out loud before making it */
+  #nuCount.go { color: var(--accent2); font-weight: 700; animation: countFlash .45s ease-in-out 2; }
+  #nuBar { height: 3px; margin-top: .45rem; border-radius: 999px; background: rgba(127,127,127,.25); overflow: hidden; }
+  #nuBar > span { display: block; height: 100%; width: 100%; background: var(--accent2); transition: width 1s linear; }
   #rateVote { display: flex; gap: .6rem; justify-content: center; margin-bottom: .85rem; }
   .vote-big { display: flex; flex-direction: column; align-items: center; gap: .35rem; padding: .6rem 1.15rem; font-size: .76rem; border-radius: 12px; }
   .vote-big span { font-size: 1.8rem; line-height: 1; filter: grayscale(1); opacity: .5; transition: filter .12s, opacity .12s, transform .1s; }
@@ -480,6 +493,8 @@
           <div id="nextUp" hidden>
             <div class="nu-label">Up next</div>
             <div class="nu-title" id="nextTitle"></div>
+            <div id="nuCount"></div>
+            <div id="nuBar"><span></span></div>
           </div>
           <div class="rc-actions">
             <button id="rateNext" hidden>Play next &#9654;</button>
@@ -978,7 +993,14 @@ let ytApiPromise = null, ytPlayer = null, playingVideo = null, playQueue = null;
 // A video asked for before the embed can accept it — see openPlayer's onReady.
 let ytPending = null;
 let rateTimer = null, countdownTimer = null, pillTimer = null, npFadeTimer = null;
+let advanceTimer = null, backTimer = null;
 let pillShown = false, doneMode = false;
+// The wait is not this number: the embed takes a few seconds of its own to
+// load and start the next video, and that time is spent staring at the same
+// panel. Budget the whole gap — roughly six seconds from the end of one video
+// to the start of the next — and this is what is left over for the countdown.
+const NEXT_DELAY = 4;                 // seconds the end panel waits before moving on
+let countdownLeft = 0, countdownPaused = false;
 let localMode = false;   // true while a downloaded file is playing from disk
 
 function loadYtApi() {
@@ -1070,6 +1092,9 @@ function showNextPill(remaining) {
   const next = hasNextInQueue() ? playQueue.list[playQueue.idx + 1] : null;
   const secs = Math.max(0, Math.ceil(remaining));
   $("npCount").textContent = next ? `Up next in ${secs}s` : `Ends in ${secs}s`;
+  // The last few seconds are the ones worth reacting to, so the number starts
+  // blinking rather than counting quietly to itself.
+  $("npCount").classList.toggle("urgent", secs <= 5);
   $("npTitle").textContent = next ? next.title : "";
   $("npTitle").hidden = !next;
   $("npNow").hidden = !next;
@@ -1105,6 +1130,7 @@ function paintVote(n) {
 async function voteFromCard(n) {
   if (!playingVideo) return;
   if ((playingVideo.rating || 0) === n) n = 0;
+  bumpCountdown();
   paintVote(n);
   $("rateTitle").textContent = n ? "Thanks!" : "How was it?";
   $("rateSub").textContent = voteLabel(n);
@@ -1123,7 +1149,7 @@ function enterDoneMode() {
   $("rateTitle").textContent = playingVideo.rating ? "Thanks!" : "How was it?";
   if (playingVideo.rating) $("rateSub").textContent = voteLabel(playingVideo.rating);
   else $("rateSub").textContent = next
-    ? "Vote, or skip to the next one" : "Skip the vote if it was just okay";
+    ? "Vote, or let it move on by itself" : "Skip the vote if it was just okay";
   if (next) {
     $("nextTitle").textContent = next.title;
     $("nextUp").hidden = false;
@@ -1199,21 +1225,72 @@ function advanceQueue(auto = false) {
   openPlayer(playQueue.list[playQueue.idx], playQueue);
 }
 
-// once the video's done, auto-advance to the next on a short, cancelable countdown
+// Once the video is over it moves on by itself, visibly: the seconds tick down
+// where the next title is already being read, and the panel says the move out
+// loud before making it. Resting the mouse on the panel pauses it.
 function startCountdown() {
   stopCountdown();
-  let secs = 6;
-  const btn = $("rateNext");
-  btn.textContent = `Play next ▶ (${secs})`;
+  countdownLeft = NEXT_DELAY;
+  countdownPaused = false;
+  paintCountdown();
   countdownTimer = setInterval(() => {
-    secs -= 1;
-    if (secs <= 0) { stopCountdown(); advanceQueue(); return; }
-    btn.textContent = `Play next ▶ (${secs})`;
+    if (countdownPaused) return;
+    countdownLeft -= 1;
+    if (countdownLeft <= 0) { fireCountdown(); return; }
+    paintCountdown();
   }, 1000);
 }
+
+function paintCountdown() {
+  const box = $("nuCount");
+  box.classList.remove("go");
+  if (countdownPaused) {
+    box.classList.remove("tick");
+    box.textContent = "Paused — move off the panel to carry on";
+  } else {
+    box.innerHTML = `Playing next in <b>${countdownLeft}s</b>`;
+    box.classList.remove("tick");
+    void box.offsetWidth;   // restart the pulse on the new number
+    box.classList.add("tick");
+  }
+  $("nuBar").firstElementChild.style.width =
+    `${Math.max(0, (countdownLeft / NEXT_DELAY) * 100)}%`;
+}
+
+// A beat between announcing the move and making it: the switch should never be
+// something that merely happens to you.
+function fireCountdown() {
+  stopCountdown();
+  const box = $("nuCount");
+  box.classList.remove("tick");
+  box.classList.add("go");
+  box.textContent = "Playing next…";
+  $("nuBar").firstElementChild.style.width = "0%";
+  advanceTimer = setTimeout(() => {
+    advanceTimer = null;
+    if (playingVideo) advanceQueue(true);
+  }, 350);   // long enough to read "Playing next…", short enough not to be a wait
+}
+
 function stopCountdown() {
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
-  $("rateNext").textContent = "Play next ▶";
+  if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+  countdownPaused = false;
+}
+
+// Any deliberate press on the panel buys the full delay back — voting, or
+// starting a download, must never be cut off by the advance it interrupted.
+function bumpCountdown() {
+  if (!countdownTimer) return;
+  countdownLeft = NEXT_DELAY;
+  countdownPaused = false;
+  paintCountdown();
+}
+
+function setCountdownPaused(on) {
+  if (!countdownTimer || countdownPaused === on) return;
+  countdownPaused = on;
+  paintCountdown();
 }
 
 function onVideoEnded() {
@@ -1231,11 +1308,15 @@ $("votePill").onmouseenter = () => clearTimeout(pillTimer);
 $("votePill").onmouseleave = () => fadePillIn(2000);
 
 $("rateVote").querySelectorAll(".vote-big").forEach(b =>
-  b.onclick = () => { stopCountdown(); voteFromCard(+b.dataset.vote); });
+  b.onclick = () => voteFromCard(+b.dataset.vote));
 $("rateNext").onclick = () => { stopCountdown(); advanceQueue(); };
 $("rateDismiss").onclick = () => { stopCountdown(); closePlayer(); };
-// hovering the card means the user is deciding — cancel the auto-advance
-$("rateInner").onmouseenter = stopCountdown;
+// The mouse on the panel means someone is deciding. It used to cancel the
+// auto-advance outright, which made the whole thing look broken whenever the
+// pointer simply happened to be resting over the middle of the video — so it
+// pauses instead, says so, and picks up again when you move away.
+$("rateInner").onmouseenter = () => setCountdownPaused(true);
+$("rateInner").onmouseleave = () => setCountdownPaused(false);
 
 // the "next in line" is the following card in whatever grid you played from,
 // unless an explicit queue (e.g. a playlist) was handed in
