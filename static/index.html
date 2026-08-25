@@ -41,6 +41,11 @@
   main { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 57px); }
   nav { background: var(--panel); border-right: 1px solid var(--border); padding: .8rem; }
   nav h2 { font-size: .75rem; text-transform: uppercase; color: var(--muted); margin: .8rem .3rem .4rem; }
+  .navhead { display: flex; align-items: baseline; justify-content: space-between; gap: .4rem; }
+  .navhead h2 { flex: 1 1 auto; min-width: 0; }
+  #themeSort { background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 6px;
+    font-size: .72rem; padding: .1rem .15rem; margin-right: .3rem; flex: none; }
+  #themeSort:hover { border-color: var(--border); }
   .theme-item { display: flex; justify-content: space-between; padding: .38rem .55rem; border-radius: 7px; cursor: pointer; font-size: .88rem; }
   .theme-item:hover, .theme-item.active { background: var(--panel2); }
   .theme-item .n { color: var(--muted); font-size: .78rem; }
@@ -285,7 +290,15 @@
 
 <main>
   <nav>
-    <h2>Themes</h2>
+    <div class="navhead">
+      <h2>Video themes</h2>
+      <select id="themeSort" title="Order the theme list">
+        <option value="name">A&ndash;Z</option>
+        <option value="name-desc">Z&ndash;A</option>
+        <option value="count">most videos</option>
+        <option value="count-asc">fewest videos</option>
+      </select>
+    </div>
     <div id="themeList"></div>
     <h2>Playlists</h2>
     <div id="playlistList"></div>
@@ -1454,12 +1467,32 @@ document.addEventListener("keydown", (e) => {
 
 function refreshSidebar() { loadThemes(); loadPlaylists(); }
 
+// Sidebar orderings. "most videos" sorts by the count actually on screen, so it
+// follows the "unwatched only" filter like the numbers beside it do — with the
+// filter on it answers "what have I got most left to watch of?". Ties fall back
+// to A–Z so the list never reshuffles between two themes of equal size.
+const THEME_SORTS = {
+  name: (a, b) => a.name.localeCompare(b.name),
+  "name-desc": (a, b) => b.name.localeCompare(a.name),
+  count: (a, b) => b.video_count - a.video_count || a.name.localeCompare(b.name),
+  "count-asc": (a, b) => a.video_count - b.video_count || a.name.localeCompare(b.name),
+};
+
+$("themeSort").value = localStorage.getItem("themeSort") || "name";
+$("themeSort").onchange = (e) => {
+  localStorage.setItem("themeSort", e.target.value);
+  loadThemes();
+};
+
 async function loadThemes() {
   // Counts follow the "unwatched only" filter: on → each theme shows how many
   // unwatched videos it holds (and "All videos" the unwatched total).
   const unwatched = $("unwatchedOnly").checked;
   const data = await api("/themes" + (unwatched ? "?watched=false" : ""));
   themes = data.themes;
+  // Sorted for the sidebar only: the recommend dropdown and the theme datalist
+  // stay in the server's A–Z order, which is not this control's business.
+  const ordered = [...themes].sort(THEME_SORTS[$("themeSort").value] || THEME_SORTS.name);
   const list = $("themeList");
   list.replaceChildren();
   const all = document.createElement("div");
@@ -1468,7 +1501,7 @@ async function loadThemes() {
   all.innerHTML = `<span>All videos</span><span class="n">${data.total_videos}</span>`;
   all.onclick = () => { activeTheme = null; activePlaylist = null; activeChannel = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
   list.appendChild(all);
-  themes.forEach(t => {
+  ordered.forEach(t => {
     const el = document.createElement("div");
     el.className = "theme-item" + (t.name === activeTheme && !activePlaylist ? " active" : "");
     el.innerHTML = `<span>${t.name}</span>
