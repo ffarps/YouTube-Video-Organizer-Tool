@@ -250,20 +250,83 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   button doing nothing visible). The `popover` attribute is added only for the
   duration: worn permanently, the UA's popover styles — `inset: 0`,
   `margin: auto`, its own border and background — leak into the ordinary
-  layout. The player swaps between the YouTube iframe and
+  layout. The object `new YT.Player()` returns is empty until the embed
+  reports ready — `loadVideoById` only appears some way into the first video —
+  so reopening before then threw and left the *previous* video playing under
+  the new one's title. Other call sites test for the method they want and give
+  up; this one holds the id (`ytPending`) and `onReady` plays it, because
+  giving up here shows the wrong video. `onReady` also stops a player closed
+  before it ever started: the constructor's autoplay is still coming and
+  nothing else can stop a player that had no methods yet.
+  The player swaps between the YouTube iframe and
   `#localPlayer` (a `<video>` on `/media`) — everything downstream reads
   `playerClock()` instead of branching, and hiding the iframe needs an
   explicit `iframe[hidden]` rule because `#playerHost iframe` outranks the
-  UA's `[hidden]`. Fullscreen has **two** routes and both end at
-  `syncShellFullscreen`: YouTube's own button (a request from inside the
-  iframe is granted, and this document's `fullscreenchange` fires with the
-  iframe as `fullscreenElement`), and `#playerFs` / the `f` key, which raise
-  `#playerHost`. Prefer the latter — raising the host rather than the iframe
-  keeps `#votePill` and `#rateCard` on screen instead of stranded behind it —
-  and note `#playerHost:fullscreen` must clear the 16/9 `aspect-ratio`, or the
-  host keeps a 16/9 box on a screen that isn't. Neither route does anything
-  for the window on its own; the desktop shell is what makes it the whole
-  screen. Download state polls `/downloads` only while something is in flight
+  UA's `[hidden]`. Fullscreen has **one** way in: `#playerFs` or the `f` key,
+  raising `#playerHost`. The embed is created with **`fs: 0`**, which takes
+  away YouTube's own fullscreen button, because the two routes were never
+  equivalent. Ours raises the host and brings `#votePill`, `#nextPill` and
+  `#rateCard` along; YouTube's raises the *iframe*, which strands the rate card
+  behind the frame (only `#cornerStack` is ever lifted, see `syncOverlayLayer`),
+  puts WebView2 into a fullscreen UI whose controls stop answering — play/pause
+  by clicking the frame is all that still works — and leaves an exit that has
+  to unwind through a cross-origin frame, the slowest and least reliable way
+  back, which is what fed the leftover-frame bug below. `syncOverlayLayer` and
+  the iframe branch stay for a plain browser and for anything that reaches
+  fullscreen another way; they are no longer the ordinary path. Note
+  `#playerHost:fullscreen` must clear the 16/9 `aspect-ratio`, or the host keeps
+  a 16/9 box on a screen that isn't. Going fullscreen does nothing for the
+  window on its own; the desktop shell is what makes it the whole screen. A fresh `openPlayer` from the grid drops any fullscreen element it
+  finds first, while advancing inside a queue keeps it: a fullscreen element
+  that outlives its player is `position: fixed` over the whole viewport, so the
+  next video's modal paints its title bar and buttons *underneath* the old
+  frame and looks like a bare embed until something toggles fullscreen again.
+  **The reopened-player bug was never this, though**, and the wrong diagnosis
+  cost three rounds. It took instrumenting the page — every open posting its own
+  geometry into the log, since no browser here can enter fullscreen and the
+  fault only appears in the window — to see that the broken open and the good
+  one have *identical* geometry — same rects on modal,
+  box, head, host and actions, backdrop a full-viewport fixed box at z-index 40,
+  frame neatly inside the host, `document.fullscreenElement` null throughout,
+  no popover stuck. The only difference is that the first open creates the
+  iframe **into an already-visible modal**, while every later one reveals an
+  iframe that was already there while the subtree was `display: none`. The DOM
+  was right and WebView2 simply never repainted it: a cross-origin iframe that
+  survives a `display:none` round trip comes back with a composited layer over a
+  page that is not redrawn under it, which is why the app appears undimmed with
+  a bare frame floating over it. Two presses of `f` "fixed" it because entering
+  and leaving fullscreen forces a fresh composite. `teardownYtPlayer` is the
+  fix: the embed is destroyed on close and the `#ytplayer` placeholder put back
+  as `#playerHost`'s first child, so the subtree is only ever hidden with no
+  iframe in it and every open builds a new one inside a modal already on screen.
+  Advancing inside a queue never hides the modal, so it keeps the live player
+  and the `loadVideoById` fast path. Never "optimise" this by holding the embed
+  across a close. `closePlayer` still lets `exitFullscreen()` settle before
+  hiding (`hidePlayerModal`) and `openPlayer`'s guard still un-hides before
+  exiting — ordering that is right on its own terms, not a fix for the above.
+  `#playerBox` is sized from the height it must fit in — the 16/9 `#playerHost`
+  is driven by the box's *width*, so the width is capped at what leaves room
+  for the two chrome rows. That reserve has to be the chrome's **real** height:
+  the `88vh`/12vh guess it replaced fell short below ~790px of viewport, and
+  the modal has no scroll, so the head and the actions row were cropped away
+  and the player read as a bare embed with no title and no controls — the same
+  symptom as the stale-fullscreen case above, from a different cause. The
+  reserve is still a constant, so `max-height: 96vh` plus a shrinkable host
+  (`flex: 0 1 auto`) is the backstop: the frame goes slightly pillarboxed
+  rather than anything being cut off. `#playerTitle` is ellipsised for the same
+  reason — a wrapping title would grow the chrome past what was reserved.
+  The Themes sidebar sorts by name or by video count, either way round
+  (`#themeSort`, remembered in localStorage). The count orderings rank by the
+  count actually on screen, so they follow the "unwatched only" filter like the
+  numbers beside them do, and break ties A–Z so equal-sized themes hold still.
+  It orders a copy — the recommend dropdown and the theme datalist keep the
+  server's A–Z. `paintChannelBanner` is called from an in-flight `/videos`
+  response and so is guarded twice: by `browseSeq` at the call site and by a
+  null `activeChannel` inside. Without them, switching scope before a channel
+  page landed left the banner hanging over the whole library — and because the
+  render reads `activeChannel.title` after `replaceChildren`, a scope that had
+  gone to null threw mid-render and left the emptied strip on screen.
+  Download state polls `/downloads` only while something is in flight
   and repaints individual cards, never the grid (scroll position). The channel
   name on a card is a link into a third browse scope, `activeChannel`, sitting
   alongside `activeTheme` and `activePlaylist` — all three are mutually

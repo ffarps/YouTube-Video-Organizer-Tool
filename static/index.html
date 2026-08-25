@@ -83,13 +83,26 @@
   #bulkBox .modalhead { display: flex; justify-content: space-between; align-items: center; padding: .5rem .8rem; font-weight: 600; }
   #bulkText { display: block; width: calc(100% - 1.6rem); margin: 0 .8rem; height: 180px; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem; font-family: ui-monospace, Consolas, monospace; font-size: .82rem; }
   #bulkBox .modalfoot { display: flex; justify-content: flex-end; padding: .6rem .8rem; }
-  #playerBox { width: min(1600px, 94vw, calc(88vh * 16 / 9)); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-  #playerHead { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .5rem .8rem; }
-  #playerTitle { font-weight: 600; font-size: .95rem; }
+  /* The box is sized from the height it has to fit in, because the 16/9 host is
+     driven by the box's *width*: pick a width whose frame plus the two chrome
+     rows still clears the viewport. The reserve has to be the chrome's real
+     height — the old 12vh guess was under it below ~790px of viewport, and the
+     head and the actions row were then quietly cropped off the top and bottom
+     of a modal that has no scroll, which reads on screen as a bare embed with
+     no title, no close button and no controls. max-height + a shrinkable host
+     is the backstop for whatever the reserve still gets wrong. */
+  #playerBox { width: min(1600px, 94vw, calc((96vh - 104px) * 16 / 9)); max-height: 96vh;
+    display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  #playerHead { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .5rem .8rem; flex: none; }
+  /* One line, always: a long title wrapping would grow the chrome past what the
+     width calculation above reserved for it. */
+  #playerTitle { font-weight: 600; font-size: .95rem; flex: 1 1 auto; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #playerClose { font-size: 1.05rem; padding: .15rem .6rem; }
   #playerHead .headbtns { display: flex; gap: .4rem; flex: none; }
   #playerFs { font-size: 1rem; padding: .15rem .6rem; }
-  #playerHost { aspect-ratio: 16/9; background: #000; position: relative; }
+  #playerHost { aspect-ratio: 16/9; background: #000; position: relative; flex: 0 1 auto; min-height: 0; }
   /* Fullscreen goes on #playerHost, not the iframe, so the vote pill and the
      end-of-video panel come along instead of being stranded behind it. The
      aspect ratio has to go for the duration: with it the host would keep a
@@ -163,7 +176,7 @@
   #rateCard .rc-actions button { font-size: .82rem; }
   #rateNext { background: var(--accent2); border-color: var(--accent2); color: #fff; }
   #rateNext:hover { filter: brightness(1.1); }
-  #playerActions { display: flex; align-items: center; gap: .8rem; padding: .55rem .8rem; }
+  #playerActions { display: flex; align-items: center; gap: .8rem; padding: .55rem .8rem; flex: none; }
   #playerYt { margin-left: auto; color: var(--accent2); font-size: .85rem; text-decoration: none; }
   .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.8); color: #fff; padding: 1px 6px; border-radius: 5px; font-size: .75rem; }
   .actions .btns { display: flex; gap: .35rem; }
@@ -962,6 +975,8 @@ async function dlMenu(el, e) {
 
 // --- embedded player ---------------------------------------------------
 let ytApiPromise = null, ytPlayer = null, playingVideo = null, playQueue = null;
+// A video asked for before the embed can accept it — see openPlayer's onReady.
+let ytPending = null;
 let rateTimer = null, countdownTimer = null, pillTimer = null, npFadeTimer = null;
 let pillShown = false, doneMode = false;
 let localMode = false;   // true while a downloaded file is playing from disk
@@ -1211,6 +1226,20 @@ function gridQueueFor(v) {
 }
 
 async function openPlayer(v, queue = null) {
+  // Opening from the grid must start from a known fullscreen state. Advancing
+  // inside a queue must not — that one keeps whatever the last video was in.
+  // A fullscreen element that outlived its player is not a cosmetic leftover:
+  // it is position:fixed over the whole viewport, so the reopened modal renders
+  // its title bar and buttons *underneath* the old frame and the player looks
+  // like a bare embed until something toggles fullscreen again.
+  if ($("playerModal").hidden && document.fullscreenElement) {
+    // Show it back first: an exit run against a display:none subtree is exactly
+    // what leaves the leftover frame behind (see hidePlayerModal). Nothing
+    // paints in between — the title is set a few lines down, same task.
+    $("playerModal").hidden = false;
+    document.exitFullscreen().catch(() => {});
+    dropOverlayLayer();
+  }
   playingVideo = v;
   playQueue = queue || gridQueueFor(v);
   pillShown = false; doneMode = false;
@@ -1229,11 +1258,39 @@ async function openPlayer(v, queue = null) {
   $("ytplayer").hidden = false;
   const YT = await loadYtApi();
   startRateWatch();
-  if (ytPlayer) { ytPlayer.loadVideoById(v.id); return; }
+  // The object `new YT.Player()` hands back is empty until the embed reports
+  // ready — it only grows loadVideoById some way into the first video. Every
+  // other call site here tests for the method it wants and gives up; this one
+  // can't, because giving up leaves the *previous* video playing under the new
+  // one's title. So the id waits instead, and onReady plays it. Closing and
+  // reopening straight away is the way to hit this.
+  if (ytPlayer) {
+    if (ytPlayer.loadVideoById) ytPlayer.loadVideoById(v.id);
+    else ytPending = v.id;
+    return;
+  }
   ytPlayer = new YT.Player("ytplayer", {
     videoId: v.id,
-    playerVars: { autoplay: 1, origin: location.origin },
+    // `fs: 0` takes away YouTube's own fullscreen button. Two routes in was one
+    // too many, and they are not equivalent: ours raises #playerHost and brings
+    // the vote pill, the countdown and the rate card along, while YouTube's
+    // raises the *iframe* — which in WebView2 lands in a fullscreen UI whose
+    // controls stop answering (play/pause is all that still works), paints the
+    // end-of-video panel behind the frame where it can't be clicked, and leaves
+    // a cross-origin exit to unwind on the way out, the slowest and least
+    // reliable way back. #playerFs and `f` are the way in now; the button is
+    // right above the frame in the modal's own title bar.
+    playerVars: { autoplay: 1, origin: location.origin, fs: 0 },
     events: {
+      onReady: () => {
+        // Closed before it ever started: the constructor's autoplay is still
+        // coming, and nothing else can stop a player that had no methods yet.
+        if ($("playerModal").hidden) { ytPending = null; ytPlayer.stopVideo(); return; }
+        if (!ytPending) return;
+        const id = ytPending;
+        ytPending = null;
+        ytPlayer.loadVideoById(id);
+      },
       onStateChange: (e) => {
         if (e.data === YT.PlayerState.ENDED) onVideoEnded();
       },
@@ -1343,12 +1400,87 @@ function toggleFullscreen() {
 }
 $("playerFs").onclick = toggleFullscreen;
 
+// Leaving fullscreen has to *finish* before the modal is hidden, and that is
+// the whole reason this is not one line inside closePlayer. Hiding the modal in
+// the same task takes the box out from under an exit that is still in flight:
+// the element stops being the fullscreen element, but the presentation it was
+// given is never unwound, and nothing shows it while the subtree is display
+// none. The next open puts that subtree back on screen with the leftover
+// fullscreen frame still over it, painting the modal's own title bar, close
+// button and actions row underneath — the player reads as a bare embed. By then
+// document.fullscreenElement is already null, so neither closePlayer nor
+// openPlayer's guard has anything left to see, and only a fresh enter-and-exit
+// rebuilds it: the two presses of `f` that appear to fix it. Ending a video
+// fullscreen and closing from the rate card is the ordinary way to finish
+// watching, so this is reached constantly. The timeout is the backstop for an
+// exit that never settles — a stuck promise must never strand the player open.
+function hidePlayerModal() {
+  const modal = $("playerModal");
+  if (!document.fullscreenElement) { modal.hidden = true; return; }
+  let hidden = false;
+  // A frame after the exit, so the fullscreen box is unwound and laid out again
+  // before the subtree loses its boxes for good.
+  const hide = () => {
+    if (hidden) return;
+    hidden = true;
+    requestAnimationFrame(() => { modal.hidden = true; });
+  };
+  // `fullscreenchange` is the authoritative signal and fires ahead of the
+  // promise; the promise is the backup for an engine that skips the event. The
+  // timeout must not be a *deadline* the exit races — a close that lands a
+  // fraction late is what puts the leftover frame back over the next video, and
+  // an exit out through a cross-origin iframe can take a while. Generous, and
+  // only there so a promise that never settles can't strand the player open.
+  document.addEventListener("fullscreenchange", hide, { once: true });
+  document.exitFullscreen().then(hide, hide);
+  setTimeout(hide, 2000);
+}
+
+// The embed is torn down on every close, not kept for the next open, and that
+// is not tidiness — it is the fix for the leftover-frame bug.
+//
+// What the client notes showed: on a broken open the layout is *perfect*.
+// Modal, box, head, host and actions all have exactly the rects they have on
+// the open that looks right, the backdrop is a full-viewport fixed box at
+// z-index 40, and the iframe sits inside the host where it belongs. Nothing is
+// over anything, no fullscreen element exists, no popover is stuck. The one
+// difference between the open that renders and the ones that don't is that the
+// first creates the iframe *into an already-visible modal*, while the rest
+// reveal an iframe that was already there when the subtree was display:none.
+//
+// So the DOM was never wrong — WebView2 just doesn't repaint it. A cross-origin
+// iframe that survives a display:none round trip comes back with its own
+// composited layer over a page that is never redrawn underneath it: no
+// backdrop, no card, the frame apparently floating over the app. Two presses of
+// `f` "fixed" it because a fullscreen enter and exit is a big enough change to
+// force a fresh composite.
+//
+// Destroying the player puts every open back on the path that works: the
+// subtree is hidden with no iframe in it, and the next open builds a new one
+// inside a modal that is already on screen. Advancing inside a queue never
+// hides the modal, so it keeps the live player and its loadVideoById fast path.
+function teardownYtPlayer() {
+  if (ytPlayer && ytPlayer.destroy) {
+    try { ytPlayer.destroy(); } catch (err) { /* already gone */ }
+  }
+  ytPlayer = null;
+  ytPending = null;
+  // destroy() takes the iframe out of the DOM with it. Put the placeholder back
+  // as the *first* child: #rateCard and #cornerStack are painted over the frame
+  // by document order as much as by z-index.
+  if (!$("ytplayer")) {
+    const slot = document.createElement("div");
+    slot.id = "ytplayer";
+    const host = $("playerHost");
+    host.insertBefore(slot, host.firstChild);
+  }
+}
+
 function closePlayer() {
-  // Never leave the window stretched over a player that's gone.
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  dropOverlayLayer();  // and never leave the stack stranded in the top layer
-  $("playerModal").hidden = true;
+  // Silence first: the modal lingers for the frame or two the fullscreen exit
+  // takes, and nothing should still be playing behind it.
   if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+  teardownYtPlayer();
   stopLocalPlayer();
   stopRateWatch();
   stopCountdown();
@@ -1358,6 +1490,8 @@ function closePlayer() {
   doneMode = false;
   playingVideo = null;
   playQueue = null;
+  dropOverlayLayer();  // never leave the stack stranded in the top layer
+  hidePlayerModal();   // ...or the window stretched over a player that's gone
 }
 
 $("playerClose").onclick = closePlayer;
