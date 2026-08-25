@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     # Required only for private playlists such as Watch Later.
     ytdlp_cookies_browser: Optional[str] = None
 
+    # yt-dlp player client(s) for downloads, comma-separated, e.g. "android"
+    # or "android,web". None leaves yt-dlp's own default. YouTube now gates
+    # the default client's stream URLs behind a proof-of-origin token: without
+    # cookies (or a PO-token plugin) the metadata still resolves but every
+    # stream 403s. `android` needs neither and downloads fine, at the cost of
+    # only being offered up to 360p on most videos — which is why this is a
+    # knob and not a silent fallback. Set it when YouTube changes its mind
+    # again; the working client rotates.
+    ytdlp_player_client: Optional[str] = None
+
     # Where on-demand downloads are written, one file per video id.
     media_path: str = "media"
 

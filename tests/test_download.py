@@ -110,11 +110,15 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDIA_PATH", str(tmp_path / "media"))
     monkeypatch.setenv("YOUTUBE_API_KEY", "")
     monkeypatch.setenv("YTDLP_COOKIES_BROWSER", "")
+    # Neutralised, not inherited: these are read from the developer's own .env
+    # otherwise, and a machine configured for android would fail the ceiling
+    # assertions below for a reason that has nothing to do with the code.
+    monkeypatch.setenv("YTDLP_PLAYER_CLIENT", "")
     monkeypatch.setenv("DOWNLOAD_MAX_HEIGHT", "1440")
     get_settings.cache_clear()
 
     def fake_download(video_id, media_dir, max_height=1440, audio_only=False,
-                      cookies_browser=None, progress=None):
+                      cookies_browser=None, player_client=None, progress=None):
         media_dir.mkdir(parents=True, exist_ok=True)
         path = media_dir / f"{video_id}.{'m4a' if audio_only else 'mp4'}"
         path.write_bytes(b"\0" * 4096)
@@ -408,6 +412,17 @@ def test_capabilities_are_reported(client):
     assert isinstance(data["ffmpeg"], bool)
     # what the machine can really do, so the UI can label the rest
     assert data["max_height"] == (2160 if data["ffmpeg"] else 360)
+
+
+def test_a_capped_player_client_lowers_the_advertised_ceiling(client, monkeypatch):
+    """Getting past YouTube's token gate without cookies costs resolution, and
+    the UI has to say so before the choice is made — offering 4K and returning
+    360p is the silent downgrade this module exists to avoid."""
+    monkeypatch.setenv("YTDLP_PLAYER_CLIENT", "android")
+    get_settings.cache_clear()
+    assert client.get("/downloads").json()["max_height"] == 360
+    monkeypatch.setenv("YTDLP_PLAYER_CLIENT", "")
+    get_settings.cache_clear()
 
 
 def test_disk_usage_counts_finished_copies_only(client, monkeypatch):

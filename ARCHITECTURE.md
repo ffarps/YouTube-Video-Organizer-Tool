@@ -54,6 +54,51 @@ python scripts/migrate_videos_json.py [videos.json] [organizer.db]  # legacy imp
   `vcodec^=avc1` in the selector made a request for 4K match the 1080p
   branch first and silently return 1080p. `format_sort` ranks by `res`
   first and uses h264 only to break ties at the same height.
+  **Two different things both surface as a 403 on every stream, and they are
+  not the same problem.** The first is a missing JavaScript engine: YouTube's
+  stream URLs carry a signature that has to go back through their player JS to
+  be valid, and without an engine yt-dlp takes a path it now calls deprecated
+  and produces URLs the CDN refuses. Only `deno` is enabled upstream by
+  default, so an installed Node goes unused unless named — `js_runtime` finds
+  deno/node/bun the way `ffmpeg_available` finds ffmpeg, and `yt-dlp-ejs` (a
+  dependency) is the solver script run inside it. Getting this wrong is
+  invisible: it looks exactly like the second problem and no message tells them
+  apart. The second is the proof-of-origin token. YouTube gates its default
+  player client's stream URLs behind a proof-of-origin token: metadata resolves
+  and the full ladder up to 2160p is listed, then every download is refused, and
+  `extractor_retries` only re-resolves URLs that get refused the same way.
+  Upgrading yt-dlp does not fix it. Measured on 2026-08-18: default → 403;
+  `android` → downloads, 360p ceiling on every video tried; `tv` → "DRM
+  protected"; `ios`, `web_safari`, `mweb`, `tv_simply`, `web_embedded` → no
+  usable formats at all. `android_vr` is the trap worth knowing about — it lists
+  the whole ladder to 2160p and then 403s on every stream, so it looks like the
+  answer right up until nothing downloads; `tv_downgraded` offers no formats,
+  `web_creator` demands a sign-in and `web_music` calls the video unavailable.
+  **Cookies are the way out, together with a JS runtime — and neither
+  works without the other.** `YTDLP_COOKIES_BROWSER` pointed at a signed-in
+  profile restores the full ladder: measured 2026-08-18, 1080p and 1440p
+  (352 MB) downloading normally. Cookies *alone* were tested first and looked
+  like they made things worse — every client returning no usable formats — but
+  that measurement was taken before `js_runtime` existed, when nothing worked
+  anyway; a wrong conclusion drawn from a broken configuration, and it cost
+  most of an evening chasing token providers that were never the problem.
+  Retest a dismissed setting after fixing anything underneath it. The value
+  takes yt-dlp's `browser[:profile]` form via `cookie_spec`, which matters for
+  Firefox forks: yt-dlp only knows a fixed list of browser names, so Zen is
+  unreachable as `zen`, but it is Firefox underneath with the same unencrypted
+  `cookies.sqlite` — `firefox:<profile dir>` reads it. Chromium-family
+  profiles are a different matter (app-bound encryption) and were not needed
+  here. `YTDLP_PLAYER_CLIENT` is then left **blank**: `android` was the
+  no-cookies fallback and costs the whole ladder above 360p.
+  The working client rotates, so this is a knob rather than a hardcoded
+  default, and there is
+  deliberately **no automatic fallback to `android`** — quietly turning a
+  request for 1080p into 360p is the same silent downgrade `FORMAT_SORT` exists
+  to prevent. `_explain` turns the raw 403 into the settings that address it,
+  because nothing about "HTTP Error 403: Forbidden" points at any of them. The
+  cap is advertised as well as enforced: `client_ceiling` folds it into
+  `effective_height`, so a machine set to `android` offers 360p in the UI
+  instead of accepting a request for 4K and returning 360p.
 - `app/downloads.py` — job manager: thread per download so the request
   returns immediately, live byte counts in memory (`_active`), durable
   status in the `downloads` table. `reset_stale` runs in the lifespan

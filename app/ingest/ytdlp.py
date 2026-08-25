@@ -9,6 +9,8 @@ from typing import List, Optional
 
 import yt_dlp
 
+from app.ingest import download
+
 
 def _flat_opts(cookies_browser: Optional[str]) -> dict:
     opts = {
@@ -18,7 +20,7 @@ def _flat_opts(cookies_browser: Optional[str]) -> dict:
         "skip_download": True,
     }
     if cookies_browser:
-        opts["cookiesfrombrowser"] = (cookies_browser,)
+        opts["cookiesfrombrowser"] = download.cookie_spec(cookies_browser)
     return opts
 
 

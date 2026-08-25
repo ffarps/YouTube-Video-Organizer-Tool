@@ -507,7 +507,9 @@ def list_downloads(
         "quality_choices": ytdl.QUALITY_CHOICES,
         # Without ffmpeg every choice collapses to 360p. The UI shows this so
         # you don't pick 4K and quietly receive something far smaller.
-        "max_height": ytdl.effective_height(max(ytdl.QUALITY_CHOICES)),
+        "max_height": ytdl.effective_height(
+            max(ytdl.QUALITY_CHOICES), settings.ytdlp_player_client
+        ),
     }
 
 
@@ -533,6 +535,7 @@ def start_download(
             else (body.max_height or settings.download_max_height),
             audio_only=body.audio_only,
             cookies_browser=settings.ytdlp_cookies_browser,
+            player_client=settings.ytdlp_player_client,
         )
     except downloads.DownloadBusy as e:
         raise HTTPException(status_code=409, detail=str(e))

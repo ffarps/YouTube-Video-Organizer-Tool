@@ -137,6 +137,7 @@ def start(
     max_height: Optional[int],
     audio_only: bool = False,
     cookies_browser: Optional[str] = None,
+    player_client: Optional[str] = None,
 ) -> dict:
     """Queue a download and return once the worker thread is running.
 
@@ -177,6 +178,7 @@ def start(
                 max_height=max_height,
                 audio_only=audio_only,
                 cookies_browser=cookies_browser,
+                player_client=player_client,
                 progress=on_progress,
             )
             db.mark_download_done(
@@ -217,7 +219,8 @@ def start(
         "audio_only": audio_only,
         "requested_height": max_height,
         # What will actually land, which is lower when ffmpeg is missing.
-        "effective_height": None if audio_only else ytdl.effective_height(max_height),
+        "effective_height": None if audio_only
+        else ytdl.effective_height(max_height, player_client),
     }
 
 
