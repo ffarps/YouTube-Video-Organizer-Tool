@@ -162,6 +162,24 @@ panel, with an up-next countdown, only appears once the video ends. Every time
 you open a video the play is counted, which is independent of watched and of
 your vote: replaying something never re-marks it or clears a thumb.
 
+Where you stopped is remembered. Leave a video part-way through — close it,
+close the app, or have the player die under you — and the next time you open
+it, it picks up there and says so, with "Start over" beside it if you wanted
+the beginning after all. A card whose video you started shows how far in you
+got as a bar along the bottom of the thumbnail. Finishing a video, or marking
+it watched, retires its resume point.
+
+The YouTube embed sometimes stops answering: the frame goes dead, clicks do
+nothing, and it says nothing about why. The app watches the player's clock and
+notices — a player that claims to be playing while its position stands still,
+one that never loads at all, or one YouTube refused outright — and offers a
+way out on the spot: **Reload**, which rebuilds the player at the second you
+had reached, or a link to the same moment on youtube.com. `reload player` in
+the row under the video does the same thing whenever you want it, whether or
+not anything was detected. Each incident is written to `logs/watchlog.log`, so
+"it froze again" leaves evidence: which video, what the player claimed to be
+doing, and how far in it was.
+
 Migrating from the old `videos.json` format:
 
 ```bash
@@ -279,7 +297,7 @@ The UI is a thin layer over a REST API, with interactive docs at
 - Embeddings and review: `POST /embeddings/build`, `POST /themes/auto-assign`,
   `POST /themes/discover`, `GET /review`
 - Watching: `PATCH /videos/{id}/watch-state`, `POST /videos/{id}/play`,
-  `GET /recommendations`
+  `POST /videos/{id}/position`, `GET /recommendations`
 - Downloads: `POST|DELETE /videos/{id}/download`, `GET /downloads`,
   `POST /downloads/reveal`
 

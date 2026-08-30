@@ -63,7 +63,14 @@ CREATE TABLE IF NOT EXISTS watch_state (
     -- these say how often you come back to it, which is the thing that
     -- actually identifies a favourite.
     play_count     INTEGER NOT NULL DEFAULT 0,
-    last_played_at TEXT
+    last_played_at TEXT,
+    -- Where you were when the video stopped. A dead embed, a closed window or
+    -- simply running out of evening all leave a video half-watched, and
+    -- hunting for the spot again by hand is the part that feels broken.
+    -- Cleared the moment the video is finished: a watched video has nothing
+    -- left to resume.
+    resume_seconds REAL,
+    resume_at      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS playlists (
@@ -191,10 +198,24 @@ def _migrate_play_counters(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE watch_state ADD COLUMN last_played_at TEXT")
 
 
+def _migrate_resume_positions(conn: sqlite3.Connection) -> None:
+    """Add the resume point to a watch_state that predates it.
+
+    Guarded on the column list for the same reason as `_migrate_play_counters`
+    — see there.
+    """
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(watch_state)")}
+    if "resume_seconds" not in columns:
+        conn.execute("ALTER TABLE watch_state ADD COLUMN resume_seconds REAL")
+    if "resume_at" not in columns:
+        conn.execute("ALTER TABLE watch_state ADD COLUMN resume_at TEXT")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     _migrate_ratings_to_thumbs(conn)
     _migrate_play_counters(conn)
+    _migrate_resume_positions(conn)
     conn.commit()
 
 
@@ -249,7 +270,7 @@ def get_video(conn: sqlite3.Connection, video_id: str) -> Optional[dict]:
     row = conn.execute(
         """
         SELECT v.*, w.status AS watch_status, w.rating,
-               w.play_count, w.last_played_at,
+               w.play_count, w.last_played_at, w.resume_seconds,
                d.status AS download_status, d.filename AS download_file
         FROM videos v
         LEFT JOIN watch_state w ON w.video_id = v.id
@@ -304,6 +325,10 @@ def _row_to_video(row: sqlite3.Row) -> dict:
     # means zero plays rather than unknown.
     video["play_count"] = video.get("play_count") or 0
     video.setdefault("last_played_at", None)
+    # Same story for the resume point: no row means nothing to resume, and the
+    # queries that don't join watch_state at all still have to answer the card
+    # renderer.
+    video.setdefault("resume_seconds", None)
     return video
 
 
@@ -457,7 +482,7 @@ def videos_by_theme(
         return None
     query = """
         SELECT v.*, w.status AS watch_status, w.rating,
-               w.play_count, w.last_played_at,
+               w.play_count, w.last_played_at, w.resume_seconds,
                d.status AS download_status, d.filename AS download_file
         FROM videos v
         JOIN video_themes vt ON vt.video_id = v.id AND vt.theme_id = ?
@@ -639,7 +664,7 @@ def list_videos(
 ) -> List[dict]:
     query = """
         SELECT v.*, w.status AS watch_status, w.rating,
-               w.play_count, w.last_played_at,
+               w.play_count, w.last_played_at, w.resume_seconds,
                d.status AS download_status, d.filename AS download_file
         FROM videos v
         LEFT JOIN watch_state w ON w.video_id = v.id
@@ -801,7 +826,8 @@ def unwatched_candidates(
     max_duration_sec: Optional[int] = None,
 ) -> List[dict]:
     query = """
-        SELECT v.*, w.status AS watch_status, w.rating
+        SELECT v.*, w.status AS watch_status, w.rating, w.resume_seconds,
+               w.play_count, w.last_played_at
         FROM videos v
         LEFT JOIN watch_state w ON w.video_id = v.id
         WHERE COALESCE(w.status, 'unwatched') = 'unwatched'
@@ -899,6 +925,16 @@ def set_watch_state(
             "UPDATE watch_state SET status = ?, watched_at = ? WHERE video_id = ?",
             (status, watched_at, video_id),
         )
+        # Finishing a video retires its resume point: offering to continue
+        # something you have already marked watched is noise, and the stale
+        # position would otherwise send a rewatch back to wherever you gave up
+        # the first time.
+        if status == "watched":
+            conn.execute(
+                "UPDATE watch_state SET resume_seconds = NULL, resume_at = NULL"
+                " WHERE video_id = ?",
+                (video_id,),
+            )
     if rating is not None:
         # 0 clears the vote — tapping the thumb you already gave takes it back
         conn.execute(
@@ -906,6 +942,53 @@ def set_watch_state(
             (rating or None, video_id),
         )
     return True
+
+
+# Below this, there is nothing to go back to: a few seconds in is the start of
+# the video, and dropping someone at 0:08 reads as the app having lost the
+# place rather than kept it.
+MIN_RESUME_SECONDS = 20.0
+# ...and this close to the end it is a finished video, not a bookmark. Wider
+# than the frontend's own end-of-video window on purpose: a resume point that
+# survives to the last half-minute is worse than none.
+END_RESUME_MARGIN = 30.0
+
+
+def set_resume_position(
+    conn: sqlite3.Connection, video_id: str, seconds: Optional[float]
+) -> Optional[Optional[float]]:
+    """Remember where a video stopped. Returns the stored value (None when it
+    was cleared), or None-as-missing for an unknown video — callers check
+    existence separately, see the route.
+
+    Written every few seconds while something plays, so this stays one UPDATE
+    with no reads beyond the video row.
+    """
+    row = conn.execute(
+        "SELECT duration_sec FROM videos WHERE id = ?", (video_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    conn.execute(
+        "INSERT OR IGNORE INTO watch_state (video_id) VALUES (?)", (video_id,)
+    )
+    duration = row["duration_sec"]
+    keep = seconds is not None and seconds >= MIN_RESUME_SECONDS
+    if keep and duration and seconds >= duration - END_RESUME_MARGIN:
+        keep = False
+    value = round(float(seconds), 1) if keep else None
+    conn.execute(
+        "UPDATE watch_state SET resume_seconds = ?, resume_at = ? WHERE video_id = ?",
+        (value, now_iso() if value is not None else None, video_id),
+    )
+    return value
+
+
+def get_resume_position(conn: sqlite3.Connection, video_id: str) -> Optional[float]:
+    row = conn.execute(
+        "SELECT resume_seconds FROM watch_state WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    return row["resume_seconds"] if row else None
 
 
 def record_play(conn: sqlite3.Connection, video_id: str) -> Optional[int]:
@@ -1011,7 +1094,7 @@ def playlist_videos(conn: sqlite3.Connection, playlist_id: str) -> Optional[List
         for r in conn.execute(
             """
             SELECT v.*, w.status AS watch_status, w.rating,
-               w.play_count, w.last_played_at, pi.position,
+               w.play_count, w.last_played_at, w.resume_seconds, pi.position,
                    d.status AS download_status, d.filename AS download_file
             FROM playlist_items pi
             JOIN videos v ON v.id = pi.video_id

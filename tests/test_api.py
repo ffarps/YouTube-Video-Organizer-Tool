@@ -269,6 +269,64 @@ def test_a_watched_write_survives_a_simultaneous_play_counter(client):
     assert client.get("/videos/guitar000ok").json()["watch_status"] == "watched"
 
 
+def test_resume_position_survives_the_player(client):
+    """Where a video stopped, kept so a dead embed costs seconds, not the video.
+
+    The player used to leave nothing behind: an iframe that froze meant
+    closing it, finding the card again and dragging the scrubber back to
+    roughly the right place.
+    """
+    client.post("/videos", json={"url": "guitar000ok"})  # 900 seconds long
+    stored = client.post("/videos/guitar000ok/position", json={"seconds": 312.4})
+    assert stored.status_code == 200
+    assert stored.json()["resume_seconds"] == 312.4
+    assert client.get("/videos/guitar000ok").json()["resume_seconds"] == 312.4
+    # and it travels with the listings the cards are built from
+    listed = client.get("/videos").json()["videos"]
+    assert next(v for v in listed if v["id"] == "guitar000ok")["resume_seconds"] == 312.4
+
+    assert client.post("/videos/guitar000ok/position", json={"seconds": None}).json()[
+        "resume_seconds"
+    ] is None
+    assert client.post("/videos/missing00id/position", json={"seconds": 10}).status_code == 404
+
+
+def test_a_position_at_either_end_is_not_a_resume_point(client):
+    """The start of a video and the end of one are both "nothing to resume".
+
+    Dropping someone back at 0:08 reads as the app having lost the place
+    rather than kept it, and a point in the last half-minute belongs to a
+    video that is finished.
+    """
+    client.post("/videos", json={"url": "guitar000ok"})  # 900 seconds long
+    url = "/videos/guitar000ok/position"
+    assert client.post(url, json={"seconds": 8}).json()["resume_seconds"] is None
+    assert client.post(url, json={"seconds": 880}).json()["resume_seconds"] is None
+    assert client.post(url, json={"seconds": 400}).json()["resume_seconds"] == 400
+
+
+def test_watching_a_video_retires_its_resume_point(client):
+    """Otherwise a rewatch starts wherever you gave up the first time."""
+    client.post("/videos", json={"url": "guitar000ok"})
+    client.post("/videos/guitar000ok/position", json={"seconds": 400})
+    watched = client.patch("/videos/guitar000ok/watch-state", json={"status": "watched"})
+    assert watched.json()["resume_seconds"] is None
+    # ...and unwatching it does not conjure the old position back
+    again = client.patch("/videos/guitar000ok/watch-state", json={"status": "unwatched"})
+    assert again.json()["resume_seconds"] is None
+
+
+def test_player_events_reach_the_log(client, caplog):
+    """The embed is cross-origin, so a freeze leaves no trace this side at all
+    unless the page says so."""
+    response = client.post(
+        "/diagnostics/player-event",
+        json={"event": "stalled", "video_id": "guitar000ok", "detail": "state=1 at=73"},
+    )
+    assert response.status_code == 204
+    assert "player stalled: video=guitar000ok state=1 at=73" in caplog.text
+
+
 def test_vote_is_thumbs_and_clearable(client):
     client.post("/videos", json={"url": "guitar000ok"})
     url = "/videos/guitar000ok/watch-state"

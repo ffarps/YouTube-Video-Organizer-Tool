@@ -146,6 +146,17 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   migration on `SCHEMA_VERSION`**; bumping it re-runs the ratings step and
   flips every thumbs up to thumbs down. `_migrate_play_counters` shows the
   pattern: guard on `PRAGMA table_info` instead.
+- `watch_state.resume_seconds` / `resume_at` — where a video stopped, written
+  by the page every few seconds of playback and on every way out of the player
+  (close, skip, pause, stall, `pagehide` via `sendBeacon` — the one send that
+  survives the window closing). `db.set_resume_position` is the authority on
+  what is worth keeping: under `MIN_RESUME_SECONDS` you are still at the start
+  and being dropped there reads as the app having lost the place, and within
+  `END_RESUME_MARGIN` of the end the video is finished, not bookmarked.
+  `set_watch_state('watched')` clears it, so a rewatch starts at the beginning
+  rather than wherever you gave up the first time. Added by
+  `_migrate_resume_positions`, guarded on `PRAGMA table_info` — **not** on
+  `SCHEMA_VERSION`, see below.
 - `watch_state.play_count` / `last_played_at` — rewatches, counted per
   player open (`POST /videos/{id}/play`), deliberately independent of
   `status` and `rating`. Reaching for something again is what identifies a
@@ -153,6 +164,13 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   Offline copies are the same idea from the other side, so `list_videos`
   and `videos_by_theme` take a `downloaded` filter (only `status='done'`
   counts — a queued or failed row has no file behind it).
+- `POST /videos/{id}/position` — the resume point. POST rather than PATCH so
+  the page can send the last one through `navigator.sendBeacon`, which only
+  speaks POST, and returns just the stored value: it is called every few
+  seconds while something plays. `POST /diagnostics/player-event` is the other
+  half of the same problem — the embed is a cross-origin iframe, so a player
+  that dies leaves nothing in the app's log at all unless the page says so, and
+  "it froze again" is not something anyone can act on.
 - `app/api/routes.py` — all endpoints; `get_db` opens a **connection per
   request** and closes it when the request ends. One shared connection on
   `app.state.db` is what it used to hand out, and that is a race, not a
@@ -306,6 +324,37 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   giving up here shows the wrong video. `onReady` also stops a player closed
   before it ever started: the constructor's autoplay is still coming and
   nothing else can stop a player that had no methods yet.
+  **A dead embed used to cost the whole video.** The iframe stops answering —
+  no error, nothing on screen, clicks landing on a frame that ignores them —
+  and the only way out was closing the player, finding the card again and
+  dragging the scrubber back to roughly where you were. Three things address
+  it, and they are deliberately independent. `trackResume` writes the position
+  every `RESUME_SAVE_EVERY` seconds off the same 1Hz tick as the vote pill, so
+  whatever happens next, the place is already kept (it ignores a position under
+  1s: a resumed embed reports 0 for the first ticks while it buffers towards
+  `start`, and writing that would clear the very point it resumed from).
+  `watchForStall` runs *before* the tick's `doneMode`/no-clock returns, because
+  a player that never produced a duration is the case it most needs to catch;
+  it flags a player that claims to be PLAYING while its clock stands still for
+  `STALL_SECONDS`, one buffering past `BUFFER_SECONDS`, and one that never
+  became ready — but paused is a choice, not a fault, and is the one state
+  where a still clock is correct. `onError` covers the fourth kind, a video
+  YouTube refuses outright (101/150 is the common one: embedding disabled),
+  which used to look exactly like a freeze. All of them land in `flagStuck`,
+  which keeps the position first and then raises `#stuckPill` — in
+  `#cornerStack`, which is a page element painted over the iframe, so a dead
+  embed cannot swallow the click meant for the way out. The pill does not fade
+  like the vote nudge: what it reports is a screen where nothing else responds.
+  `reloadPlayer` is the way back — `teardownYtPlayer` then a fresh embed at the
+  position reached, without ever hiding the modal — and `#playerReload` in the
+  action row is the same move on demand, because detection is the convenience
+  and not the guarantee. Every incident also goes to `POST
+  /diagnostics/player-event`: nothing else can tell a YouTube problem from an
+  app one after the fact. Resuming itself goes in through `playerVars.start`
+  for a new player and `loadVideoById({videoId, startSeconds})` for the reused
+  one — seeking from `onReady` instead plays the opening seconds out loud
+  before it jumps — and `#resumePill` says where it picked up, with `Start
+  over` for when that is not what you wanted.
   The player swaps between the YouTube iframe and
   `#localPlayer` (a `<video>` on `/media`) — everything downstream reads
   `playerClock()` instead of branching, and hiding the iframe needs an

@@ -1,4 +1,5 @@
 import json
+import logging
 import queue
 import sqlite3
 import threading
@@ -22,8 +23,10 @@ from app.models import (
     BulkThemeRequest,
     DiscoverRequest,
     DownloadRequest,
+    PlayerEvent,
     PlaylistCreateRequest,
     PlaylistVideoRequest,
+    ResumeUpdate,
     RevealRequest,
     RuleCreateRequest,
     SyncRequest,
@@ -70,6 +73,22 @@ def diagnostic_stacks():
     is an answer too.
     """
     return logs.dump_stacks("requested via /diagnostics/stacks")
+
+
+@router.post("/diagnostics/player-event", status_code=204)
+def record_player_event(body: PlayerEvent):
+    """The page's account of a player that stalled, errored or was reloaded.
+
+    Everything about the embed happens inside a cross-origin iframe this side
+    can see nothing of, so without this a frozen player leaves no trace at all
+    and the only evidence is someone remembering it happened. One line each,
+    truncated, in the ordinary log.
+    """
+    detail = " ".join((body.detail or "").split())[:300]
+    logging.getLogger("watchlog.player").warning(
+        "player %s: video=%s %s", body.event, body.video_id or "-", detail
+    )
+    return None
 
 
 @router.post("/sync")
@@ -497,6 +516,28 @@ def update_watch_state(
         raise HTTPException(status_code=404, detail="Video not found")
     conn.commit()
     return db.get_video(conn, video_id)
+
+
+@router.post("/videos/{video_id}/position")
+def update_resume_position(
+    video_id: str,
+    body: ResumeUpdate,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """Where this video stopped, so the next open picks it up there.
+
+    POST rather than PATCH so the page can send the last one through
+    `navigator.sendBeacon`, which only speaks POST — closing the window is
+    exactly when the position matters most and is the one moment a normal
+    fetch is not guaranteed to leave. Called every few seconds while something
+    plays, so it stays deliberately small: no video payload comes back, just
+    what was stored.
+    """
+    if db.get_video(conn, video_id) is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    seconds = db.set_resume_position(conn, video_id, body.seconds)
+    conn.commit()
+    return {"video_id": video_id, "resume_seconds": seconds}
 
 
 # --- local downloads --------------------------------------------------------

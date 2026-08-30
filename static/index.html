@@ -167,6 +167,38 @@
   #bpText { font-size: .82rem; color: #b9c0cc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #bpBack { flex: none; font-size: .78rem; padding: .3rem .6rem; border-radius: 999px;
     background: rgba(255,255,255,.12); border-color: transparent; color: #e6e9ef; }
+  /* Picked up where you left off. A receipt rather than a question: it says
+     what happened and offers the one thing you might have wanted instead,
+     then gets out of the way like the vote pill does. */
+  #resumePill { display: flex; align-items: center; gap: .6rem; max-width: min(420px, 60%);
+    padding: .4rem .5rem .4rem .85rem; border-radius: 999px; background: rgba(10,12,16,.88);
+    border: 1px solid rgba(255,255,255,.15); box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    backdrop-filter: blur(6px); opacity: 0; transform: translateY(10px); transition: opacity .28s, transform .28s; }
+  #resumePill[hidden] { display: none; }
+  #resumePill.show { opacity: 1; transform: none; }
+  #rsText { font-size: .82rem; color: #b9c0cc; white-space: nowrap; }
+  #rsRestart { flex: none; font-size: .78rem; padding: .3rem .6rem; border-radius: 999px;
+    background: rgba(255,255,255,.12); border-color: transparent; color: #e6e9ef; }
+  /* The player stopped answering (see watchForStall). Deliberately NOT a
+     fading nudge like the vote pill: what it reports is a frame where nothing
+     responds, so it stays put until it is acted on. It lives in #cornerStack
+     because that is a page element painted over the iframe — a dead embed
+     cannot swallow a click meant for this. */
+  #stuckPill { display: flex; align-items: center; gap: .5rem; max-width: min(480px, 80%);
+    padding: .45rem .5rem .45rem .85rem; border-radius: 12px; background: rgba(34,14,14,.93);
+    border: 1px solid rgba(255,120,110,.5); box-shadow: 0 8px 28px rgba(0,0,0,.6);
+    backdrop-filter: blur(6px); }
+  #stuckPill[hidden] { display: none; }
+  #stuckText { font-size: .82rem; color: #ffdad5; }
+  #stuckPill button, #stuckPill a { flex: none; font-size: .78rem; padding: .3rem .6rem;
+    border-radius: 999px; background: rgba(255,255,255,.14); border: 1px solid transparent;
+    color: #fff; text-decoration: none; white-space: nowrap; cursor: pointer; }
+  #stuckReload { background: var(--accent2); border-color: var(--accent2); }
+  /* How far into a video you got, on the card itself. Sits under the download
+     bar's slot: the two are never both meaningful at once. */
+  .resumebar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+    background: rgba(0,0,0,.5); z-index: 1; }
+  .resumebar > i { display: block; height: 100%; background: var(--accent2); }
   /* the end-of-video panel: only ever shown once the video is actually over,
      so the frame is already spent — solid black, centered */
   #rateCard { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 1.2rem;
@@ -490,6 +522,15 @@
           <span id="bpText"></span>
           <button id="bpBack">&#9664; Back</button>
         </div>
+        <div id="stuckPill" hidden>
+          <span id="stuckText"></span>
+          <button id="stuckReload" title="Rebuild the player where you left off">&#8635; Reload</button>
+          <a id="stuckYt" target="_blank" rel="noopener">YouTube &#8599;</a>
+        </div>
+        <div id="resumePill" hidden>
+          <span id="rsText"></span>
+          <button id="rsRestart" title="Play this from the beginning instead">Start over</button>
+        </div>
         <div id="votePill" hidden>
           <span id="vpLabel">How was it?</span>
           <button class="vote-mini down" data-vote="-1" title="Not for me">&#128078;</button>
@@ -533,6 +574,7 @@
       <button id="playerPrev" hidden title="Back to the previous video in this list">&#9664; previous</button>
       <button id="playerNext" hidden title="Skip to the next video in this list">next &#9654;</button>
       <button id="playerWatched">mark watched</button>
+      <button id="playerReload" title="Rebuild the player from where you are — for when the video stops responding">&#8635; reload player</button>
       <a id="playerYt" target="_blank" rel="noopener">open on YouTube &#8599;</a>
     </div>
   </div>
@@ -659,6 +701,7 @@ function card(v, extras = {}) {
       ${score != null ? `<span class="score">match ${(score * 100).toFixed(0)}%</span>` : ""}
       ${playMarkHtml(v)}
       ${dlMarkHtml(v)}
+      ${resumeBarHtml(v)}
       <div class="dlprog" hidden><i></i></div>
     </div>
     <div class="body">
@@ -691,6 +734,7 @@ function card(v, extras = {}) {
     await api(`/videos/${v.id}/watch-state`, { method: "PATCH",
       body: JSON.stringify({ status }) });
     v.watch_status = status;
+    if (status === "watched") v.resume_seconds = null;  // the server just did the same
     updateCard(el, v);  // rebuild this card only — keeps your scroll position
   };
   el.querySelectorAll(".vote span").forEach(s => s.onclick = async () => {
@@ -783,6 +827,30 @@ function repaintPlayMark(videoId) {
     const wrap = el.querySelector(".thumbwrap");
     wrap.querySelectorAll(".watchedmark, .playmark").forEach(m => m.remove());
     wrap.insertAdjacentHTML("beforeend", playMarkHtml(el._video));
+  });
+}
+
+// How far into a video you got, drawn along the bottom of the thumbnail —
+// the answer to "did I already start this one?" without opening it. Needs a
+// duration to have a width; resuming itself does not.
+function resumeBarHtml(v) {
+  const at = resumePoint(v);
+  if (!at || !v.duration_sec) return "";
+  const pct = Math.min(100, Math.round((at / v.duration_sec) * 100));
+  return `<div class="resumebar" title="Left off at ${fmtDur(Math.round(at))}">`
+    + `<i style="width:${pct}%"></i></div>`;
+}
+
+// Repaint just the bar, the way repaintPlayMark does: a position is written
+// every few seconds while you watch, and rebuilding cards at that rate would
+// fight with the grid.
+function repaintResumeBar(videoId) {
+  document.querySelectorAll(".card").forEach(el => {
+    if (!el._video || el._video.id !== videoId) return;
+    const wrap = el.querySelector(".thumbwrap");
+    wrap.querySelectorAll(".resumebar").forEach(bar => bar.remove());
+    const html = resumeBarHtml(el._video);
+    if (html) wrap.insertAdjacentHTML("beforeend", html);
   });
 }
 
@@ -1032,6 +1100,238 @@ const NEXT_DELAY = 4;                 // seconds the end panel waits before movi
 let countdownLeft = 0, countdownPaused = false;
 let localMode = false;   // true while a downloaded file is playing from disk
 
+// --- where you left off ---------------------------------------------------
+// A player that dies mid-video used to cost the whole video: nothing had
+// recorded the position, so the way back was closing the player, finding the
+// card again and dragging the scrubber to roughly the right place. The
+// position is written every few seconds instead, and the next open starts
+// there. The server decides what is worth keeping (db.set_resume_position);
+// the two thresholds are mirrored here so a card can repaint without waiting
+// for a round trip — keep them in step.
+const RESUME_MIN = 20;         // below this you are still at the start
+const RESUME_END_MARGIN = 30;  // above this you have finished it
+const RESUME_SAVE_EVERY = 5;   // seconds of playback between writes
+let lastResumeSent = -1;
+let resumeTimer = null;
+
+function resumeWorth(v, seconds) {
+  if (seconds == null || !(seconds >= RESUME_MIN)) return false;
+  if (v.duration_sec && seconds >= v.duration_sec - RESUME_END_MARGIN) return false;
+  return true;
+}
+
+// What a stored position is worth on open; 0 means "start from the top".
+function resumePoint(v) {
+  return v && resumeWorth(v, v.resume_seconds) ? v.resume_seconds : 0;
+}
+
+// The video object here is the same one the card holds (card() keeps it as
+// `_video`), so writing the position is also what repaints the grid.
+function saveResume(video, seconds, { beacon = false } = {}) {
+  if (!video) return;
+  const keep = resumeWorth(video, seconds);
+  video.resume_seconds = keep ? seconds : null;
+  repaintResumeBar(video.id);
+  const body = JSON.stringify({ seconds: keep ? Math.round(seconds * 10) / 10 : null });
+  const path = `/videos/${video.id}/position`;
+  if (beacon && navigator.sendBeacon) {
+    // The window is going away, and a fetch started here is not guaranteed to
+    // leave — which is exactly the moment the position matters most.
+    navigator.sendBeacon(path, new Blob([body], { type: "application/json" }));
+    return;
+  }
+  // Bookkeeping: a failed write must never interrupt playback, and there is
+  // nothing useful to say about one at 1Hz.
+  api(path, { method: "POST", body }).catch(() => {});
+}
+
+function trackResume(clock) {
+  if (!playingVideo || doneMode) return;
+  // A resumed embed reports 0 for the first ticks, while it is still buffering
+  // towards `start`. Writing that would clear the very point it resumed from.
+  if (clock.current < 1) return;
+  if (Math.abs(clock.current - lastResumeSent) < RESUME_SAVE_EVERY) return;
+  lastResumeSent = clock.current;
+  saveResume(playingVideo, clock.current);
+}
+
+// Where the player is right now, for the callers that need it after playback
+// has already been stopped — closePlayer silences the video before anything
+// else, and a stopped embed reports 0.
+function currentPosition() {
+  const clock = playerClock();
+  return clock && clock.current > 1 ? clock.current : 0;
+}
+
+function showResumePill(at) {
+  const pill = $("resumePill");
+  $("rsText").textContent = `Picked up at ${fmtDur(Math.round(at))}`;
+  clearTimeout(resumeTimer);
+  if (pill.hidden) {
+    pill.hidden = false;
+    void pill.offsetWidth;  // flush hidden->flex so the fade runs
+  }
+  pill.classList.add("show");
+  resumeTimer = setTimeout(hideResumePill, 9000);
+}
+
+function hideResumePill() {
+  clearTimeout(resumeTimer);
+  const pill = $("resumePill");
+  if (pill.hidden) return;
+  pill.classList.remove("show");
+  resumeTimer = setTimeout(() => { pill.hidden = true; }, 300);  // after the fade
+}
+
+function startOver() {
+  if (!playingVideo) return;
+  hideResumePill();
+  lastResumeSent = 0;
+  saveResume(playingVideo, null);
+  if (localMode) {
+    const el = $("localPlayer");
+    el.currentTime = 0;
+    el.play().catch(() => {});
+    return;
+  }
+  if (ytPlayer && ytPlayer.seekTo) ytPlayer.seekTo(0, true);
+}
+
+// --- when the player stops answering --------------------------------------
+// The embed is a cross-origin iframe: when it dies it does not say so, it just
+// stops. Nothing on screen changes, clicks land on a frame that ignores them,
+// and the only way out was closing the player and hunting for the video again.
+// So the clock is watched instead — a player that claims to be playing while
+// its position stands still is stuck, and so is one that never gets as far as
+// a duration — and the way back is offered on the spot, at the position it had
+// reached. Detection is the convenience, not the guarantee: #playerReload in
+// the action row does the same thing on demand, for whatever this misses.
+const STALL_SECONDS = 8;         // playing, and the clock has not moved
+const BUFFER_SECONDS = 25;       // spinning without getting anywhere
+const NEVER_READY_SECONDS = 20;  // the embed never produced a duration at all
+let ytOpenedAt = 0, ytReady = false;
+let stallPos = null, stallTicks = 0, bufferTicks = 0, stuckShown = false;
+
+function resetStallWatch() {
+  stallPos = null; stallTicks = 0; bufferTicks = 0;
+  hideStuckPill();
+}
+
+function ytState() {
+  if (!ytPlayer || !ytPlayer.getPlayerState) return null;
+  try { return ytPlayer.getPlayerState(); } catch (e) { return null; }
+}
+
+function watchForStall(clock) {
+  if (localMode || doneMode || stuckShown || !playingVideo) return;
+  // Nothing to read yet. An embed that never reaches a duration is the most
+  // complete kind of stuck — and the one with no clock to watch.
+  if (!clock || !clock.duration) {
+    // Paused or cued-but-not-started is someone's choice or a blocked
+    // autoplay, not a player that failed — and both can sit at no duration
+    // indefinitely without anything being wrong.
+    if ([2, 5].includes(ytState())) return;
+    if (ytOpenedAt && Date.now() - ytOpenedAt > NEVER_READY_SECONDS * 1000) {
+      flagStuck("never-started", ytReady
+        ? "The video never started playing." : "The player never loaded.");
+    }
+    return;
+  }
+  const state = ytState();
+  if (state === 3) {  // BUFFERING
+    if (++bufferTicks >= BUFFER_SECONDS) flagStuck("buffering", "This has been buffering for a while.");
+    return;
+  }
+  bufferTicks = 0;
+  // Paused is a choice, not a fault — and the one state where a still clock is
+  // the correct behaviour.
+  if (state !== 1) { stallTicks = 0; stallPos = null; return; }
+  if (stallPos !== null && Math.abs(clock.current - stallPos) < 0.05) stallTicks += 1;
+  else stallTicks = 0;
+  stallPos = clock.current;
+  if (stallTicks >= STALL_SECONDS) flagStuck("stalled", "The video stopped playing.");
+}
+
+function flagStuck(event, message, detail = "") {
+  if (stuckShown) return;
+  stuckShown = true;
+  const at = currentPosition();
+  // Whatever is done about it, the place is kept first: Reload comes back
+  // here, and so does opening the video again tomorrow.
+  if (at) saveResume(playingVideo, at);
+  $("stuckText").textContent = at
+    ? `${message} You were at ${fmtDur(Math.round(at))}.` : message;
+  if (playingVideo) {
+    $("stuckYt").href = `https://www.youtube.com/watch?v=${playingVideo.id}`
+      + (at ? `&t=${Math.floor(at)}` : "");
+  }
+  $("stuckPill").hidden = false;
+  logPlayerEvent(event, `${detail} state=${ytState()} at=${Math.round(at)}`);
+}
+
+function hideStuckPill() {
+  stuckShown = false;
+  $("stuckPill").hidden = true;
+}
+
+function ytErrorText(code) {
+  switch (code) {
+    case 2: return "YouTube rejected this video id.";
+    case 5: return "YouTube's own player failed on this video.";
+    case 100: return "This video has been removed or made private.";
+    case 101:
+    case 150: return "The owner does not allow this one to play outside YouTube.";
+    default: return `YouTube reported error ${code}.`;
+  }
+}
+
+// A player that dies inside a cross-origin iframe leaves nothing behind — no
+// console this side can read, no request, nothing in the app's own log. One
+// line per incident, in the same rotating file as everything else, is what
+// turns "it froze again" into something answerable.
+function logPlayerEvent(event, detail = "") {
+  fetch("/diagnostics/player-event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      event, video_id: playingVideo ? playingVideo.id : null, detail,
+    }),
+  }).catch(() => {});
+}
+
+// The way out of a dead frame that costs neither the video nor the place: the
+// embed is thrown away and built again at the position it had reached. It is
+// the manual chore — close, find the card, reopen, drag the scrubber — done in
+// one press, and it never leaves the modal.
+async function reloadPlayer(reason = "manual") {
+  if (!playingVideo) return;
+  const at = currentPosition() || resumePoint(playingVideo);
+  logPlayerEvent("reload", `${reason} state=${ytState()} at=${Math.round(at)}`);
+  if (at) saveResume(playingVideo, at);
+  hideStuckPill();
+  if (localMode) {
+    const el = $("localPlayer");
+    el.load();                 // re-open the file; a stalled <video> recovers here
+    seekLocalTo(el, at);
+    el.play().catch(() => {});
+    return;
+  }
+  teardownYtPlayer();
+  $("ytplayer").hidden = false;
+  await loadYtApi();
+  buildYtPlayer(playingVideo.id, at);
+  startRateWatch();
+  if (at) showResumePill(at);
+}
+
+// A <video> that has not read its metadata yet ignores currentTime, and the
+// local player is handed a fresh src on every open.
+function seekLocalTo(el, at) {
+  if (!at) return;
+  if (el.readyState >= 1) { el.currentTime = at; return; }
+  el.addEventListener("loadedmetadata", () => { el.currentTime = at; }, { once: true });
+}
+
 function loadYtApi() {
   if (!ytApiPromise) ytApiPromise = new Promise(resolve => {
     window.onYouTubeIframeAPIReady = () => resolve(window.YT);
@@ -1049,12 +1349,20 @@ async function markWatched(video) {
   // claiming otherwise — a dropped PATCH is precisely how a finished video ends
   // up back in the unwatched list with nothing on screen having said so.
   const before = video.watch_status;
+  const beforeResume = video.resume_seconds;
   video.watch_status = "watched";
+  // The server retires the resume point of a watched video (set_watch_state);
+  // this keeps the card in step instead of leaving a half-finished bar on
+  // something that is done.
+  video.resume_seconds = null;
+  repaintResumeBar(video.id);
   try {
     await api(`/videos/${video.id}/watch-state`, { method: "PATCH",
       body: JSON.stringify({ status: "watched" }) });
   } catch (e) {
     video.watch_status = before;
+    video.resume_seconds = beforeResume;
+    repaintResumeBar(video.id);
     if (doneMode) paintRateState();
     toast(`Could not mark watched: ${e.message}`, 6000);
     return false;
@@ -1262,10 +1570,16 @@ function playerClock() {
 
 function startRateWatch() {
   stopRateWatch();
+  lastResumeSent = -1;
   rateTimer = setInterval(() => {
-    if (doneMode) return;
     const clock = playerClock();
+    // Ahead of the two returns below on purpose: a player that never produced
+    // a duration is exactly the case the stall watch exists for, and it is the
+    // one with no clock to read.
+    watchForStall(clock);
+    if (doneMode) return;
     if (!clock || !clock.duration) return;
+    trackResume(clock);
     const remaining = clock.duration - clock.current;
     // The countdown leads the vote nudge, so the panel at the end is never a
     // surprise: you can see it coming and what follows it. Seek backwards and
@@ -1300,7 +1614,14 @@ function nearEnd() {
 function advanceQueue(auto = false) {
   if (!hasNextInQueue()) return;
   const leaving = playingVideo;
+  // Read before the switch: openPlayer below reassigns the player out from
+  // under both of these.
+  const leavingAt = currentPosition();
   if (leaving && leaving.watch_status !== "watched" && nearEnd()) markWatched(leaving);
+  // An early skip is a "not now", so the place it got to is worth keeping —
+  // the videos that were effectively finished have just had it cleared by
+  // markWatched instead.
+  else if (leaving && leavingAt) saveResume(leaving, leavingAt);
   playQueue.idx += 1;
   openPlayer(playQueue.list[playQueue.idx], playQueue);
   // openPlayer clears the corner overlays synchronously, before its first
@@ -1312,6 +1633,9 @@ function advanceQueue(auto = false) {
 // the video that just started is still ahead of you.
 function goBack() {
   if (!hasPrevInQueue()) return;
+  const leaving = playingVideo;
+  const leavingAt = currentPosition();
+  if (leaving && leavingAt) saveResume(leaving, leavingAt);
   stopCountdown();
   hideBackPill();
   playQueue.idx -= 1;
@@ -1416,6 +1740,9 @@ function setCountdownPaused(on) {
 
 function onVideoEnded() {
   if (!playingVideo || doneMode) return;
+  // Nothing left to come back to. Cleared here as well as in markWatched,
+  // because a video that was already marked watched still takes this path.
+  saveResume(playingVideo, null);
   // finishing a video still counts as watched — unless a vote already said so,
   // in which case don't re-announce it over the panel that's coming up
   if (playingVideo.watch_status !== "watched") markWatched(playingVideo);
@@ -1488,6 +1815,8 @@ async function openPlayer(v, queue = null) {
   hideVotePill();
   hideNextPill();
   hideBackPill();
+  hideResumePill();
+  hideStuckPill();
   syncQueueButtons();
   $("playerTitle").textContent = v.title;
   $("playerYt").href = `https://www.youtube.com/watch?v=${v.id}`;
@@ -1498,7 +1827,8 @@ async function openPlayer(v, queue = null) {
   if (dlDone(v)) { openLocalPlayer(v); return; }
   stopLocalPlayer();
   $("ytplayer").hidden = false;
-  const YT = await loadYtApi();
+  const startAt = resumePoint(v);
+  await loadYtApi();
   startRateWatch();
   // The object `new YT.Player()` hands back is empty until the embed reports
   // ready — it only grows loadVideoById some way into the first video. Every
@@ -1507,12 +1837,32 @@ async function openPlayer(v, queue = null) {
   // one's title. So the id waits instead, and onReady plays it. Closing and
   // reopening straight away is the way to hit this.
   if (ytPlayer) {
-    if (ytPlayer.loadVideoById) ytPlayer.loadVideoById(v.id);
-    else ytPending = v.id;
+    // Whatever loadVideoById is going to be handed, id or id-plus-position.
+    const arg = startAt ? { videoId: v.id, startSeconds: startAt } : v.id;
+    if (ytPlayer.loadVideoById) ytPlayer.loadVideoById(arg);
+    else ytPending = arg;
+    ytOpenedAt = Date.now();
+    resetStallWatch();
+    if (startAt) showResumePill(startAt);
     return;
   }
-  ytPlayer = new YT.Player("ytplayer", {
-    videoId: v.id,
+  buildYtPlayer(v.id, startAt);
+  if (startAt) showResumePill(startAt);
+}
+
+// Everything about creating the embed, in one place, because the stuck-player
+// reload builds one too — from inside a modal that never closed.
+function buildYtPlayer(videoId, startAt = 0) {
+  resetStallWatch();
+  ytReady = false;
+  ytOpenedAt = Date.now();
+  const vars = { autoplay: 1, origin: location.origin, fs: 0 };
+  // `start` is the only way into a player that does not exist yet: there is
+  // nothing to seek on until it reports ready, and seeking from onReady plays
+  // the opening seconds out loud before it jumps.
+  if (startAt >= 1) vars.start = Math.floor(startAt);
+  ytPlayer = new window.YT.Player("ytplayer", {
+    videoId,
     // `fs: 0` takes away YouTube's own fullscreen button. Two routes in was one
     // too many, and they are not equivalent: ours raises #playerHost and brings
     // the vote pill, the countdown and the rate card along, while YouTube's
@@ -1522,20 +1872,32 @@ async function openPlayer(v, queue = null) {
     // a cross-origin exit to unwind on the way out, the slowest and least
     // reliable way back. #playerFs and `f` are the way in now; the button is
     // right above the frame in the modal's own title bar.
-    playerVars: { autoplay: 1, origin: location.origin, fs: 0 },
+    playerVars: vars,
     events: {
       onReady: () => {
+        ytReady = true;
         // Closed before it ever started: the constructor's autoplay is still
         // coming, and nothing else can stop a player that had no methods yet.
         if ($("playerModal").hidden) { ytPending = null; ytPlayer.stopVideo(); return; }
         if (!ytPending) return;
-        const id = ytPending;
+        const pending = ytPending;
         ytPending = null;
-        ytPlayer.loadVideoById(id);
+        ytPlayer.loadVideoById(pending);
       },
       onStateChange: (e) => {
-        if (e.data === YT.PlayerState.ENDED) onVideoEnded();
+        if (e.data === window.YT.PlayerState.ENDED) onVideoEnded();
+        // Pausing is the other moment a position is worth writing without
+        // waiting for the next scheduled one: it is very often the last thing
+        // that happens before the window is closed.
+        if (e.data === window.YT.PlayerState.PAUSED) {
+          const at = currentPosition();
+          if (at) saveResume(playingVideo, at);
+        }
       },
+      // Nothing used to listen for this, so a video YouTube refused to play
+      // left a dead frame and no explanation — the same symptom as a freeze,
+      // from a cause that says exactly what it is.
+      onError: (e) => flagStuck("error", ytErrorText(e.data), `code=${e.data}`),
     },
   });
 }
@@ -1557,10 +1919,13 @@ function openLocalPlayer(v) {
   el.hidden = false;
   el.src = `/media/${encodeURIComponent(v.download_file)}`;
   el.onended = onVideoEnded;
+  const startAt = resumePoint(v);
+  seekLocalTo(el, startAt);
   // Browsers block unmuted autoplay in some configurations; the controls are
   // right there, so a rejected promise is not worth surfacing.
   el.play().catch(() => {});
   startRateWatch();
+  if (startAt) showResumePill(startAt);
 }
 
 function stopLocalPlayer() {
@@ -1707,9 +2072,16 @@ function teardownYtPlayer() {
   }
   ytPlayer = null;
   ytPending = null;
-  // destroy() takes the iframe out of the DOM with it. Put the placeholder back
-  // as the *first* child: #rateCard and #cornerStack are painted over the frame
-  // by document order as much as by z-index.
+  // destroy() takes the iframe out of the DOM with it — but when it throws,
+  // the dead frame stays, and `new YT.Player` binds to an existing iframe
+  // instead of replacing it. That gives you a player wired to a frame whose
+  // insides are already gone: it renders, and it answers nothing, which is
+  // indistinguishable from the freeze all of this is about. Clear it out by
+  // hand first.
+  const leftover = $("ytplayer");
+  if (leftover && leftover.tagName === "IFRAME") leftover.remove();
+  // Put the placeholder back as the *first* child: #rateCard and #cornerStack
+  // are painted over the frame by document order as much as by z-index.
   if (!$("ytplayer")) {
     const slot = document.createElement("div");
     slot.id = "ytplayer";
@@ -1719,7 +2091,13 @@ function teardownYtPlayer() {
 }
 
 function closePlayer() {
-  // Silence first: the modal lingers for the frame or two the fullscreen exit
+  // The position before anything else: every line below stops the player, and
+  // a stopped player has no position left to read.
+  if (playingVideo) {
+    const at = currentPosition();
+    if (at) saveResume(playingVideo, at);
+  }
+  // Silence next: the modal lingers for the frame or two the fullscreen exit
   // takes, and nothing should still be playing behind it.
   if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
   teardownYtPlayer();
@@ -1730,6 +2108,8 @@ function closePlayer() {
   hideVotePill();
   hideNextPill();
   hideBackPill();
+  hideResumePill();
+  hideStuckPill();
   $("playerPrev").hidden = true;
   $("playerNext").hidden = true;
   doneMode = false;
@@ -1760,6 +2140,17 @@ document.addEventListener("keydown", (e) => {
   else if (selecting) { setSelecting(false); e._closedModal = true; }
 });
 $("playerWatched").onclick = () => { if (playingVideo) markWatched(playingVideo); };
+$("playerReload").onclick = () => reloadPlayer("action-row");
+$("stuckReload").onclick = () => reloadPlayer("stuck-pill");
+$("rsRestart").onclick = startOver;
+// The last write on the way out. pagehide is the event that actually fires
+// when the desktop window closes, and a beacon is the only send that survives
+// it — an ordinary fetch is abandoned with the page.
+window.addEventListener("pagehide", () => {
+  if (!playingVideo) return;
+  const at = currentPosition();
+  if (at) saveResume(playingVideo, at, { beacon: true });
+});
 
 function renderGrid(target, videos, extras = (v) => ({})) {
   target.replaceChildren();

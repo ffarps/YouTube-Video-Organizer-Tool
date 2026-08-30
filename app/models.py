@@ -56,6 +56,26 @@ class WatchStateUpdate(BaseModel):
     rating: Optional[int] = Field(default=None, ge=-1, le=1)
 
 
+class ResumeUpdate(BaseModel):
+    # Where the player is, in seconds. None (or a position too near either end
+    # of the video) clears the resume point — see db.set_resume_position.
+    seconds: Optional[float] = Field(default=None, ge=0)
+
+
+class PlayerEvent(BaseModel):
+    """A note from the page about the player misbehaving.
+
+    The embed lives in a cross-origin iframe, so when it stops responding
+    there is nothing in the server log to say so — and "it froze again" is not
+    a bug report anyone can act on. The page sends what it saw here instead,
+    where it lands in the same rotating log as everything else.
+    """
+
+    event: NonEmptyStr
+    video_id: Optional[str] = None
+    detail: Optional[str] = None
+
+
 class ThemeAssignRequest(BaseModel):
     name: NonEmptyStr  # stripped — "mental health " and "mental health" are one theme
 

@@ -87,3 +87,46 @@ def test_star_ratings_migrate_to_thumbs(tmp_path):
         "SELECT rating FROM watch_state WHERE video_id = 'eeeeeeeeeee'"
     ).fetchone()[0] == 1
     conn.close()
+
+
+def test_resume_columns_reach_an_older_database(tmp_path):
+    """An existing library gains the resume point without losing its votes.
+
+    The ratings migration is one-way and guarded by `user_version`, so a new
+    column can never be gated on SCHEMA_VERSION — bumping it re-runs that step
+    and flips every thumbs up into a thumbs down. This is the shape the guard
+    has to have: ask the table what columns it already has.
+    """
+    conn = db.connect(str(tmp_path / "old.db"))
+    db.init_db(conn)
+    db.upsert_video(conn, {"id": "aaaaaaaaaaa", "title": "Old video"})
+    db.set_watch_state(conn, "aaaaaaaaaaa", status="watched", rating=1)
+    conn.commit()
+    # wind the schema back to before resume points existed
+    conn.executescript(
+        """
+        ALTER TABLE watch_state RENAME TO watch_state_old;
+        CREATE TABLE watch_state (
+            video_id       TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+            status         TEXT NOT NULL DEFAULT 'unwatched',
+            rating         INTEGER,
+            watched_at     TEXT,
+            play_count     INTEGER NOT NULL DEFAULT 0,
+            last_played_at TEXT
+        );
+        INSERT INTO watch_state
+            SELECT video_id, status, rating, watched_at, play_count, last_played_at
+              FROM watch_state_old;
+        DROP TABLE watch_state_old;
+        """
+    )
+    conn.commit()
+
+    db.init_db(conn)
+
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(watch_state)")}
+    assert {"resume_seconds", "resume_at"} <= columns
+    video = db.get_video(conn, "aaaaaaaaaaa")
+    assert video["rating"] == 1          # not re-migrated into a thumbs down
+    assert video["resume_seconds"] is None
+    assert db.set_resume_position(conn, "aaaaaaaaaaa", 250.0) == 250.0
