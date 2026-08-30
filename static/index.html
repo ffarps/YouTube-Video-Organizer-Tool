@@ -2668,6 +2668,12 @@ async function loadDownloads() {
   }
 }
 
+// The badge over the thumbnail is an exception marker, not a status field. On
+// a tab where every card is already an offline copy, stamping "done" on the
+// finished ones says nothing the Play button under them does not — it was the
+// raw database status, which read as a pill in a row of controls and reads as
+// noise in the corner of a picture. So a finished copy gets no badge, and the
+// badge means there is something to know.
 function dlStatusLabel(row) {
   if (row.status === "downloading" || row.status === "queued") {
     const pct = dlPercent(row);
@@ -2675,8 +2681,11 @@ function dlStatusLabel(row) {
     return row.progress && row.progress.stage === "processing" ? "processing" : row.status;
   }
   // An error on a 'done' row means a re-download failed and this is the older
-  // copy that survived it — worth flagging, since the row otherwise looks fine.
-  if (row.status === "done" && row.error) return "done ⚠";
+  // copy that survived it. The card otherwise looks like any other finished
+  // one, so this is the case the badge most needs to catch: what you are
+  // holding is not the quality you last asked for.
+  if (row.status === "done") return row.error ? "⚠ older copy" : "";
+  if (row.status === "error") return "failed";
   return row.status;
 }
 
@@ -2840,7 +2849,13 @@ function dlCard(row) {
 // The parts of a card that move while it is downloading, and nothing else.
 function paintDlCard(el, row) {
   const badge = el.querySelector(".st");
-  if (badge) badge.textContent = dlStatusLabel(row);
+  if (badge) {
+    const label = dlStatusLabel(row);
+    badge.textContent = label;
+    // An empty badge is still a padded black box over the thumbnail. Nothing
+    // sets `display` on .st, so the UA's [hidden] rule is left to do its job.
+    badge.hidden = !label;
+  }
   const bar = el.querySelector(".dlprog");
   const pct = dlPercent(row);
   const busy = row.status === "queued" || row.status === "downloading";

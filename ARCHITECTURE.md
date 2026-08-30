@@ -447,7 +447,13 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   status, sort or filter rebuilds — a full rebuild every 1.5s would re-decode
   every thumbnail and drop the scroll position while you watch a download run.
   Both empty states drop the `dlgrid` class, or the message renders inside one
-  250px column. The channel
+  250px column. `dlStatusLabel` returns **nothing** for a plain finished copy:
+  the badge over the thumbnail is an exception marker, and on a tab where every
+  card is already an offline copy, "done" — the raw column value, which read as
+  a pill in a row of controls — says nothing the Play button under it does not.
+  What it still catches is a run in flight, one that failed, and the case that
+  otherwise looks identical to a good card: `done` *with* an error, meaning a
+  re-download failed and what you are holding is the older copy. The channel
   name on a card is a link into a third browse scope, `activeChannel`, sitting
   alongside `activeTheme` and `activePlaylist` — all three are mutually
   exclusive, and a search clears whichever is set because search always widens
