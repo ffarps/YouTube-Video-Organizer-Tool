@@ -351,17 +351,32 @@
   /* Thin progress strip pinned under the thumbnail while a download runs. */
   .dlprog { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.55); z-index: 2; }
   .dlprog > i { display: block; height: 100%; width: 0%; background: var(--accent2); transition: width .3s; }
-  .dl-row { display: flex; align-items: center; gap: .7rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 8px; margin-bottom: .4rem; background: var(--panel); font-size: .85rem; max-width: 780px; }
-  .dl-row img { width: 84px; aspect-ratio: 16/9; object-fit: cover; border-radius: 5px; background: #000; cursor: pointer; }
-  .dl-row .dlt { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
-  .dl-row .sub { color: var(--muted); font-size: .76rem; }
-  .dl-row .dlchips { flex: none; overflow: visible; margin-top: .25rem; max-width: 320px; }
-  .dl-row .dlchips .chip { font-size: .66rem; }
-  .dl-row .grow { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
-  .dl-row .st { font-size: .74rem; border-radius: 999px; padding: 1px 9px; border: 1px solid var(--border); color: var(--muted); }
-  .dl-row .st.done { border-color: var(--ok); color: var(--ok); }
-  .dl-row .st.error { border-color: var(--accent); color: var(--accent); }
-  .dl-row .st.downloading, .dl-row .st.queued { border-color: var(--accent2); color: var(--accent2); }
+  /* The offline tab is the browse grid's twin, deliberately: the same
+     thumbnail, the same 250px column, the same chips. It was a list of 780px
+     rows, which meant a full-width page showing one video per line and a scroll
+     that grew with the disk. What is different is the action row — Delete here
+     frees the file and *keeps* the video, which is not what the card's delete
+     does, so these cards are their own thing rather than card() with extras. */
+  .dlgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: .9rem; }
+  .dl-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  /* Only a finished copy plays, so only a finished copy gets the hover ▶ and
+     the pointer that promises it. */
+  .dl-card:not(.playable) .thumbwrap { cursor: default; }
+  .dl-card:not(.playable) .thumbwrap::after { content: none; }
+  .dl-card .body { padding: .6rem .7rem .7rem; display: flex; flex-direction: column; gap: .4rem; height: 9.6rem; }
+  .dl-card .dlt { font-weight: 600; font-size: .9rem; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .dl-card .sub { color: var(--muted); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dl-card .dlchips .chip { font-size: .66rem; }
+  .dl-card .dlactions { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: auto; }
+  .dl-card .dlactions button { font-size: .75rem; padding: .3rem .6rem; }
+  .dl-card .dlrm:hover { border-color: var(--accent); color: var(--accent); }
+  /* Top-left, where the browse card puts its match score: the two grids are
+     never on screen at once, so the corner is free. */
+  .dl-card .st { position: absolute; left: 6px; top: 6px; z-index: 1; font-size: .72rem;
+    border-radius: 5px; padding: 1px 7px; background: rgba(0,0,0,.72); color: #fff; border: 1px solid transparent; }
+  .dl-card .st.done { border-color: var(--ok); color: #9ff0c4; }
+  .dl-card .st.error { border-color: var(--accent); color: #ffc9c2; }
+  .dl-card .st.downloading, .dl-card .st.queued { border-color: var(--accent2); color: #cfe2ff; }
   .warnbox { border: 1px solid var(--accent); border-radius: 8px; padding: .6rem .8rem; margin-bottom: 1rem; max-width: 780px; font-size: .83rem; line-height: 1.5; color: var(--text); }
   .warnbox code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-family: ui-monospace, Consolas, monospace; }
   #localPlayer { width: 100%; height: 100%; display: block; background: #000; }
@@ -2726,63 +2741,116 @@ function renderDownloads() {
   const all = [...dlLive.values()];
   fillDlThemes(all);
   const rows = sortDlRows(filterDlRows(all));
+
+  if (!all.length || !rows.length) {
+    dlPainted = "";
+    list.classList.remove("dlgrid");
+    list.innerHTML = all.length
+      ? `<div class="empty">Nothing saved offline in
+          “${$("dlTheme").value}”.</div>`
+      : `<div class="empty">No offline copies yet — use the
+          <b>⬇ offline</b> chip on any video card.</div>`;
+    return;
+  }
+
+  // Poll ticks land here every 1.5s for as long as anything is downloading.
+  // Rebuilding then is what the old list did, and on a grid of thumbnails it
+  // costs every image a re-decode and throws away the scroll position while
+  // you are watching the very download you scrolled to — the same reason the
+  // browse grid repaints cards and never itself. So the grid is rebuilt only
+  // when its contents or their statuses actually change; a percentage ticking
+  // over is patched in place.
+  const key = rows.map(r => `${r.video_id}:${r.status}`).join("|");
+  if (key === dlPainted && list.children.length === rows.length) {
+    patchDlCards(rows);
+    return;
+  }
+  dlPainted = key;
+
+  list.classList.add("dlgrid");
   list.replaceChildren();
-  if (!all.length) {
-    list.innerHTML = `<div class="empty">No offline copies yet — use the
-      <b>⬇ offline</b> chip on any video card.</div>`;
-    return;
-  }
-  if (!rows.length) {
-    list.innerHTML = `<div class="empty">Nothing saved offline in
-      “${$("dlTheme").value}”.</div>`;
-    return;
-  }
-  rows.forEach(row => {
-    const el = document.createElement("div");
-    el.className = "dl-row";
-    const quality = row.audio_only ? "audio only"
-      : (row.height ? `${row.height}p` : "video");
-    const plays = row.play_count || 0;
-    el.innerHTML = `
+  rows.forEach(row => list.appendChild(dlCard(row)));
+}
+
+// The ids and statuses last painted, so a poll tick can tell a grid that needs
+// rebuilding from one that only needs its numbers moved on.
+let dlPainted = "";
+
+function dlCard(row) {
+  const el = document.createElement("div");
+  el.className = "dl-card" + (row.status === "done" ? " playable" : "");
+  const quality = row.audio_only ? "audio only"
+    : (row.height ? `${row.height}p` : "video");
+  const plays = row.play_count || 0;
+  const sub = [row.channel_title || "", quality,
+    row.size_bytes ? fmtBytes(row.size_bytes) : "",
+    plays ? `watched ${plays}×` : ""].filter(Boolean).join(" · ");
+  el.innerHTML = `
+    <div class="thumbwrap">
       ${row.thumbnail_url ? `<img loading="lazy" src="${row.thumbnail_url}" alt="">` : ""}
-      <div>
-        <div class="dlt" title="${row.title}">${row.title}</div>
-        <div class="sub">${row.channel_title || ""} · ${quality}${
-          row.size_bytes ? " · " + fmtBytes(row.size_bytes) : ""}${
-          plays ? ` · watched ${plays}×` : ""}</div>
-        <div class="chips dlchips">${(row.themes || [])
-          .map(t => `<span class="chip">${t}</span>`).join("")}</div>
-      </div>
-      <div class="grow">
-        <span class="st ${row.status}">${dlStatusLabel(row)}</span>
+      <span class="st ${row.status}">${dlStatusLabel(row)}</span>
+      ${row.duration_sec ? `<span class="dur">${fmtDur(row.duration_sec)}</span>` : ""}
+      <div class="dlprog" hidden><i></i></div>
+    </div>
+    <div class="body">
+      <div class="dlt">${row.title}</div>
+      <div class="sub">${sub}</div>
+      <div class="chips dlchips">${(row.themes || [])
+        .map(t => `<span class="chip">${t}</span>`).join("")}</div>
+      <div class="dlactions">
         ${row.status === "done" ? `<button class="dlplay">Play</button>` : ""}
-        ${row.status === "done" ? `<button class="dlshow" title="Show this file in your file manager">Show in folder</button>` : ""}
+        ${row.status === "done" ? `<button class="dlshow" title="Show this file in your file manager">Folder</button>` : ""}
         ${row.status === "error" ? `<button class="dlretry">Retry</button>` : ""}
         <button class="dlrm">${row.status === "done" ? "Delete" : "Clear"}</button>
-      </div>`;
-    if (row.error) el.title = row.error;
-    const play = async () => {
-      const v = await api(`/videos/${row.video_id}`);
-      openPlayer(v);
-    };
-    const playBtn = el.querySelector(".dlplay");
-    if (playBtn) playBtn.onclick = play;
-    const showBtn = el.querySelector(".dlshow");
-    if (showBtn) showBtn.onclick = () => revealDownload(row.video_id);
-    const img = el.querySelector("img");
-    if (img && row.status === "done") img.onclick = play;
-    const retry = el.querySelector(".dlretry");
-    if (retry) retry.onclick = async () => {
-      const v = await api(`/videos/${row.video_id}`);
-      await startDownload(v, { audio_only: !!row.audio_only });
-      loadDownloads();
-    };
-    el.querySelector(".dlrm").onclick = async () => {
-      await removeDownload({ id: row.video_id });
-      loadDownloads();
-    };
-    list.appendChild(el);
-  });
+      </div>
+    </div>`;
+  // Tooltips are set as properties, not attributes in the template above: a
+  // title is arbitrary text off YouTube and quoting it into HTML by hand is a
+  // trap. A clamped two-line title needs the full one on hover, and the whole
+  // reason an error card is still on screen is its message, which has nowhere
+  // to go in a 250px card.
+  el.querySelector(".dlt").title = row.title;
+  el.querySelector(".sub").title = sub;
+  if (row.error) el.title = row.error;
+  paintDlCard(el, row);
+
+  const play = async () => {
+    const v = await api(`/videos/${row.video_id}`);
+    openPlayer(v);
+  };
+  const playBtn = el.querySelector(".dlplay");
+  if (playBtn) playBtn.onclick = play;
+  const showBtn = el.querySelector(".dlshow");
+  if (showBtn) showBtn.onclick = () => revealDownload(row.video_id);
+  const thumb = el.querySelector(".thumbwrap");
+  if (row.status === "done") thumb.onclick = play;
+  const retry = el.querySelector(".dlretry");
+  if (retry) retry.onclick = async () => {
+    const v = await api(`/videos/${row.video_id}`);
+    await startDownload(v, { audio_only: !!row.audio_only });
+    loadDownloads();
+  };
+  el.querySelector(".dlrm").onclick = async () => {
+    await removeDownload({ id: row.video_id });
+    loadDownloads();
+  };
+  return el;
+}
+
+// The parts of a card that move while it is downloading, and nothing else.
+function paintDlCard(el, row) {
+  const badge = el.querySelector(".st");
+  if (badge) badge.textContent = dlStatusLabel(row);
+  const bar = el.querySelector(".dlprog");
+  const pct = dlPercent(row);
+  const busy = row.status === "queued" || row.status === "downloading";
+  bar.hidden = !busy;
+  bar.querySelector("i").style.width = busy && pct != null ? `${pct}%` : "0%";
+}
+
+function patchDlCards(rows) {
+  const cards = $("dlList").children;
+  rows.forEach((row, i) => { if (cards[i]) paintDlCard(cards[i], row); });
 }
 
 const views = { Browse: loadBrowse, Recommend: loadRecommendations, Review: loadReview, Rules: loadRules, Downloads: loadDownloads };

@@ -215,9 +215,13 @@ browser, occasionally awkward in older desktop players.
 
 Saved copies double as a favourites shelf, since saving something is a stronger
 signal than a thumb. "offline only" in the Browse toolbar narrows the grid to
-them and stacks with the theme sidebar and the search box. The Offline tab
-lists every copy with size, themes and play count, sortable by plays, size or
-title, with buttons to open the media folder or reveal a single file in it.
+them and stacks with the theme sidebar and the search box. The Offline tab is
+the same grid of thumbnails as Browse, one card per copy, showing size, quality,
+themes and play count, sortable by plays, size or title and filterable by
+category, with buttons to open the media folder or reveal a single file in it.
+Downloads still running have their own card with a progress badge, and one that
+failed keeps its card until you clear it, so nothing disappears without saying
+why.
 
 Deleting a copy frees the disk space and keeps the video in your library.
 Re-downloading at a different quality replaces it in place, and if that fails

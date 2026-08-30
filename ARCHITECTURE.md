@@ -436,7 +436,18 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   render reads `activeChannel.title` after `replaceChildren`, a scope that had
   gone to null threw mid-render and left the emptied strip on screen.
   Download state polls `/downloads` only while something is in flight
-  and repaints individual cards, never the grid (scroll position). The channel
+  and repaints individual cards, never the grid (scroll position). The Offline
+  tab is that same rule a second time: it was a list of 780px rows — one video
+  per line down a full-width page — and is now `.dlgrid`/`.dl-card`, the browse
+  grid's twin. It is deliberately **not** `card()` with extras, because Delete
+  here frees the file and keeps the video, which is the opposite of what the
+  library card's delete does. `renderDownloads` keys the painted grid on
+  `video_id:status` per row: a poll tick that only moved a percentage patches
+  the badges and bars in place (`patchDlCards`), and only a change of contents,
+  status, sort or filter rebuilds — a full rebuild every 1.5s would re-decode
+  every thumbnail and drop the scroll position while you watch a download run.
+  Both empty states drop the `dlgrid` class, or the message renders inside one
+  250px column. The channel
   name on a card is a link into a third browse scope, `activeChannel`, sitting
   alongside `activeTheme` and `activePlaylist` — all three are mutually
   exclusive, and a search clears whichever is set because search always widens
