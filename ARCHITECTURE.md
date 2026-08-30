@@ -268,7 +268,19 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   0 (hide the console) but the app **must** use style 1: style 0 propagates
   to the app's own window and it opens invisible.
 - `static/index.html` — the whole frontend, vanilla JS, served at `/`.
-  No build step; talks to the API with fetch. Voting never touches playback:
+  No build step; talks to the API with fetch. A colour theme is
+  `html[data-theme=...]` redefining seven variables and nothing else, so a
+  palette never touches a component: `--accent` is the **warm** slot — it is
+  the primary button but also delete, error and thumbs-down, so it stays
+  red/orange in every theme — and `--accent2` is the informational one (tabs,
+  progress, offline badges, links), which is where a theme gets its character.
+  Each block also sets `color-scheme`, because the native select, checkboxes
+  and scrollbars are the one part of the UI CSS cannot repaint and they render
+  light over a dark page without it. The choice is applied by an inline script
+  in `<head>`, before any paint, so there is no flash of the default; an
+  unknown stored value (a theme since renamed or dropped) leaves
+  `select.value` empty, which would show a blank picker over a themed page, so
+  the picker falls back to `dark` and rewrites the document to match. Voting never touches playback:
   `#votePill` is a corner nudge in the last ~12s that auto-fades, and
   `#rateCard` (the full panel + up-next countdown) only appears once the
   video has actually ended. `#nextPill` leads both from ~20s out (`lead` in

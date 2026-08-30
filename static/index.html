@@ -7,17 +7,44 @@
 <link rel="icon" href="/static/favicon.ico">
 <script>document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";</script>
 <style>
+  /* Themes are seven variables and nothing else: every rule below reads them,
+     so a palette never has to touch a component. --accent is the *warm* one —
+     primary buttons, but also delete, error and thumbs-down, so it stays in
+     the red/orange family whatever the theme; --accent2 is the informational
+     one (tabs, progress, offline badges, links) and is where a theme actually
+     gets its character. `color-scheme` is part of the palette too: without it
+     the native select, checkboxes and scrollbars render light on top of a dark
+     page, which is the one part of the UI CSS cannot repaint. */
   :root {
+    color-scheme: dark;
     --bg: #0f1115; --panel: #171a21; --panel2: #1e2230; --text: #e6e9ef;
     --muted: #8b93a7; --accent: #e33d3d; --accent2: #3d7ee3; --ok: #2fbf71;
     --border: #262b38;
   }
+  /* Deep blue-green, teal where the blue was: the same dark UI without the
+     red-on-charcoal that makes it read as YouTube. */
+  html[data-theme="ocean"] {
+    color-scheme: dark;
+    --bg: #0c1417; --panel: #121e22; --panel2: #19292f; --text: #e2edf0;
+    --muted: #85a1a8; --accent: #e9694f; --accent2: #2aa79e; --ok: #4fbf87;
+    --border: #20333a;
+  }
   html[data-theme="light"] {
+    color-scheme: light;
     --bg: #f5f6f8; --panel: #ffffff; --panel2: #eceef2; --text: #1a1d24;
     --muted: #5c6474; --accent: #c62828; --accent2: #2f6fd0; --ok: #1e8e5a;
     --border: #d8dce4;
   }
+  /* Warm paper. Light without the glare of a white panel on a white page —
+     the two backgrounds are far enough apart to tell cards from the grid. */
+  html[data-theme="sepia"] {
+    color-scheme: light;
+    --bg: #f4efe4; --panel: #fffdf7; --panel2: #ebe2d2; --text: #2c2620;
+    --muted: #7a6f5f; --accent: #b4552f; --accent2: #2f6f66; --ok: #4a7c3f;
+    --border: #ddd2bd;
+  }
   html[data-theme="mono"] {
+    color-scheme: light;
     --bg: #ffffff; --panel: #ffffff; --panel2: #f2f2f2; --text: #111111;
     --muted: #666666; --accent: #111111; --accent2: #111111; --ok: #111111;
     --border: #cccccc;
@@ -357,10 +384,16 @@
   <button id="btnBulk" title="Paste many video links at once">Bulk add</button>
   <button id="btnEmbed" title="Compute embeddings for new videos (needs the [ml] extra)">Embed</button>
   <button id="btnAssign" title="Auto-assign themes to unthemed videos by embedding similarity">Auto-theme</button>
-  <select id="themePick" title="Color theme">
-    <option value="dark">Dark</option>
-    <option value="light">Light</option>
-    <option value="mono">Black &amp; white</option>
+  <select id="themePick" title="Colour theme">
+    <optgroup label="Dark">
+      <option value="dark">Charcoal</option>
+      <option value="ocean">Ocean</option>
+    </optgroup>
+    <optgroup label="Light">
+      <option value="light">Daylight</option>
+      <option value="sepia">Sepia</option>
+      <option value="mono">Black &amp; white</option>
+    </optgroup>
   </select>
   <div id="syncProgress" hidden>
     <div class="barwrap"><div id="syncBar"></div></div>
@@ -590,7 +623,14 @@ let playlists = [], activePlaylist = null;
 // else that channel has posted.
 let activeChannel = null;
 
+// A theme that has since been renamed or removed leaves `select.value` empty,
+// and the picker then shows a blank box over a page that is still themed.
+// Fall back to the option the document actually has.
 $("themePick").value = document.documentElement.dataset.theme;
+if (!$("themePick").value) {
+  document.documentElement.dataset.theme = "dark";
+  $("themePick").value = "dark";
+}
 $("themePick").onchange = (e) => {
   document.documentElement.dataset.theme = e.target.value;
   localStorage.setItem("theme", e.target.value);

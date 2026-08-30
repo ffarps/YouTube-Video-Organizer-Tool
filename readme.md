@@ -180,6 +180,13 @@ not anything was detected. Each incident is written to `logs/watchlog.log`, so
 "it froze again" leaves evidence: which video, what the player claimed to be
 doing, and how far in it was.
 
+The colour theme is the dropdown at the right of the header, and it is
+remembered between runs. Two dark: **Charcoal**, the default, and **Ocean**,
+the same layout in deep blue-green if the red-on-charcoal is too close to
+YouTube for comfort. Three light: **Daylight**, **Sepia** for warm paper
+without the glare, and **Black & white** for a page meant to be printed or
+read on a bad screen.
+
 Migrating from the old `videos.json` format:
 
 ```bash
