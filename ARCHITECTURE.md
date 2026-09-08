@@ -290,6 +290,20 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   is to still be there when the video ends — and it withdraws if you seek
   back, since `remaining` is recomputed every tick. `#npCount` blinks over the
   last 5s, because a number nobody looks at is the same as no warning at all.
+  **The end panel is hidden with `visibility`, and that is not a detail.** It is
+  `position: absolute; inset: 0` over the frame and it keeps its boxes between
+  videos so it can fade, so while it was hidden with opacity alone it was an
+  invisible panel *sitting over the middle of the picture with live buttons in
+  it*: clicking the video to pause it hit a thumbs-down, the row under that was
+  `#rateWatched` and `#rateDismiss`, and the click never reached YouTube at all.
+  Which is the whole of "the video ignores my clicks, marks itself watched three
+  seconds in, and then shuts and drops me back on the grid". `pointer-events:
+  none` on `#rateCard` was meant to be the guard and `#rateInner` re-declared
+  `auto`, which a descendant is always free to do — that pair cannot hide
+  anything on its own. `visibility: hidden` can: it takes the subtree out of hit
+  testing *and* out of the tab order unless a descendant asks for `visible` by
+  name. Anything else painted over the frame has to be checked the same way, by
+  hit-testing the centre of `#playerHost` rather than by looking at it.
   The end panel is where the whole decision lives: the two votes, an explicit
   `#rateWatched` that spends most of its life as a receipt (finishing a video
   marks it watched by itself), and `#rateDownload`, which appears only behind a
@@ -384,7 +398,23 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   the iframe branch stay for a plain browser and for anything that reaches
   fullscreen another way; they are no longer the ordinary path. Note
   `#playerHost:fullscreen` must clear the 16/9 `aspect-ratio`, or the host keeps
-  a 16/9 box on a screen that isn't. Going fullscreen does nothing for the
+  a 16/9 box on a screen that isn't.
+  **An open player owns the page.** `grabPage`/`releasePage` put `inert` on the
+  header, the grid and the selection bar and `overflow: hidden` on the body, so
+  Tab cannot walk out of the modal into cards nobody can see and Space cannot
+  scroll a library hidden behind a video. The keyboard then has to be answered
+  here, because the alternative is worse: focusing the *iframe* would hand the
+  keys to YouTube and never give them back — a key pressed inside a cross-origin
+  frame does not reach this document, so `f`, Esc and the rest would go dead the
+  moment it took focus. `#playerBox` is the focus target instead
+  (`tabindex="-1"`) and `PLAYER_KEYS` drives the player through the same shim as
+  `playerClock`, so Space/k, ←/→, j/l and m work on the embed and on a
+  downloaded copy alike. Clicking into the frame is still the way to hand
+  YouTube its own shortcuts; one side or the other always has them. Closing puts
+  focus back on the card you opened. `#playerModal`'s click-outside-to-close is
+  anchored on the `mousedown` for the same reason all of this exists: the
+  letterbox around the frame is the same black as the backdrop, and a drag that
+  starts on the scrubber and lands out there is a seek, not a dismissal. Going fullscreen does nothing for the
   window on its own; the desktop shell is what makes it the whole screen. A fresh `openPlayer` from the grid drops any fullscreen element it
   finds first, while advancing inside a queue keeps it: a fullscreen element
   that outlives its player is `position: fixed` over the whole viewport, so the

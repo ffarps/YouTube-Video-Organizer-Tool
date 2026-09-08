@@ -104,6 +104,10 @@
   .thumbwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .thumbwrap::after { content: "\25B6"; position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; font-size: 2.4rem; color: #fff; background: rgba(0,0,0,.3); opacity: 0; transition: opacity .15s; pointer-events: none; }
   .thumbwrap:hover::after { opacity: 1; }
+  /* Nothing behind an open player scrolls. The modal covers the page, so a
+     Space or an arrow key moving the grid underneath is movement you cannot
+     see and did not ask for — and the grid is where you come back to. */
+  body.player-open { overflow: hidden; }
   #playerModal, #bulkModal { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.90); display: flex; align-items: center; justify-content: center; }
   #playerModal[hidden], #bulkModal[hidden] { display: none; }
   #bulkBox { width: min(640px, 94vw); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
@@ -121,6 +125,9 @@
   #playerBox { width: min(1600px, 94vw, calc((96vh - 104px) * 16 / 9)); max-height: 96vh;
     display: flex; flex-direction: column;
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  /* Focused on open so the keyboard starts inside the player rather than on
+     the grid behind it (focusPlayer) — a target, not a control, so no ring. */
+  #playerBox:focus { outline: none; }
   #playerHead { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .5rem .8rem; flex: none; }
   /* One line, always: a long title wrapping would grow the chrome past what the
      width calculation above reserved for it. */
@@ -228,10 +235,26 @@
   .resumebar > i { display: block; height: 100%; background: var(--accent2); }
   /* the end-of-video panel: only ever shown once the video is actually over,
      so the frame is already spent — solid black, centered */
+  /* Hidden with `visibility`, not with opacity alone. The panel keeps its boxes
+     so it can fade, and an invisible box is still a *clickable* box: this one
+     sits dead centre over the frame, so for the whole length of a video the
+     middle of the picture — where you click to pause — was an invisible thumbs
+     down, and the row under it an invisible "Mark watched" and "Close".
+     Clicking the video voted on it, marked it watched three seconds in, or shut
+     the player and left you looking at the grid, and none of it ever reached
+     YouTube: the click was swallowed by a panel that was not on screen yet.
+     `pointer-events: none` here was meant to be the guard, and #rateInner's own
+     `auto` punched straight back through it — a descendant re-enables hit
+     testing no matter what the ancestor said, which is why that pair of rules
+     cannot be trusted to hide anything. `visibility` does not work that way:
+     hidden takes the whole subtree out of hit testing and out of the tab order,
+     and a descendant has to name `visible` to come back. It flips at once on
+     the way in and waits out the fade on the way out, hence the 0s/.3s delay. */
   #rateCard { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 1.2rem;
-    background: #000; pointer-events: none; opacity: 0; transition: opacity .3s; }
-  #rateCard.show { opacity: 1; pointer-events: auto; }
-  #rateInner { pointer-events: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: .9rem 1.1rem 1rem; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.55); max-width: 92%; }
+    background: #000; pointer-events: none; opacity: 0; visibility: hidden;
+    transition: opacity .3s, visibility 0s .3s; }
+  #rateCard.show { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity .3s; }
+  #rateInner { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: .9rem 1.1rem 1rem; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.55); max-width: 92%; }
   #rateInner .rc-title { font-size: 1rem; font-weight: 600; }
   #rateInner .rc-sub { font-size: .8rem; color: var(--muted); margin: .15rem 0 .7rem; }
   #rateInner .rc-sub:empty { display: none; }
@@ -554,7 +577,7 @@
   </div>
 </div>
 <div id="playerModal" hidden>
-  <div id="playerBox">
+  <div id="playerBox" tabindex="-1">
     <div id="playerHead">
       <span id="playerTitle"></span>
       <span class="headbtns">
@@ -1848,6 +1871,9 @@ function gridQueueFor(v) {
 }
 
 async function openPlayer(v, queue = null) {
+  // Read before the guard below re-shows the modal: advancing inside a queue
+  // must not re-take the page or move the focus, it already holds both.
+  const wasOpen = !$("playerModal").hidden;
   // Opening from the grid must start from a known fullscreen state. Advancing
   // inside a queue must not — that one keeps whatever the last video was in.
   // A fullscreen element that outlived its player is not a cosmetic leftover:
@@ -1876,6 +1902,8 @@ async function openPlayer(v, queue = null) {
   $("playerTitle").textContent = v.title;
   $("playerYt").href = `https://www.youtube.com/watch?v=${v.id}`;
   $("playerModal").hidden = false;
+  if (!wasOpen) grabPage();
+  focusPlayer();
   countPlay(v);
   // A saved copy plays from disk — no network, no embed, and seeking works
   // because /media answers Range requests.
@@ -2145,6 +2173,44 @@ function teardownYtPlayer() {
   }
 }
 
+// --- the player owns the page while it is open ---------------------------
+// A modal that only *covers* the page is not a modal: the grid behind it keeps
+// its place in the tab order and its scrollbar, so Tab walks out of the player
+// into cards nobody can see and Space scrolls them. `inert` takes the rest of
+// the page out of reach for both, and the scroll lock stops the one key press
+// the video wants most from moving the library instead.
+let focusBeforePlayer = null;
+
+function behindPlayer() {
+  return [document.querySelector("header"), document.querySelector("main"), $("selBar")];
+}
+
+function grabPage() {
+  focusBeforePlayer = document.activeElement;
+  document.body.classList.add("player-open");
+  behindPlayer().forEach(el => { if (el) el.inert = true; });
+}
+
+function releasePage() {
+  document.body.classList.remove("player-open");
+  behindPlayer().forEach(el => { if (el) el.inert = false; });
+  // Back to the card you opened, so the keyboard picks up where it left off —
+  // but only if it is still on screen: the grid reloads behind the player.
+  const back = focusBeforePlayer;
+  focusBeforePlayer = null;
+  if (back && back.isConnected && back.focus) back.focus({ preventScroll: true });
+}
+
+// The box, not the iframe. Focusing the frame would hand the keyboard to
+// YouTube — and take it away from this page for good, since keys pressed
+// inside a cross-origin iframe never come back out: `f`, Esc and everything
+// below would stop answering. The page keeps focus and drives the player
+// through the API instead (see the shortcut handler).
+function focusPlayer() {
+  const box = $("playerBox");
+  if (box && box.focus) box.focus({ preventScroll: true });
+}
+
 function closePlayer() {
   // The position before anything else: every line below stops the player, and
   // a stopped player has no position left to read.
@@ -2172,10 +2238,74 @@ function closePlayer() {
   playQueue = null;
   dropOverlayLayer();  // never leave the stack stranded in the top layer
   hidePlayerModal();   // ...or the window stretched over a player that's gone
+  releasePage();
 }
 
 $("playerClose").onclick = closePlayer;
-$("playerModal").onclick = (e) => { if (e.target === $("playerModal")) closePlayer(); };
+// Click outside the box to close — but only a click that *began* out there.
+// The letterbox around a 16/9 frame is the same black as the backdrop, and a
+// drag that starts on the scrubber and releases past the edge of the video is
+// an ordinary way to seek: releasing it should not shut the player.
+let backdropDown = false;
+$("playerModal").addEventListener("mousedown", (e) => { backdropDown = e.target === $("playerModal"); });
+$("playerModal").onclick = (e) => {
+  if (e.target === $("playerModal") && backdropDown) closePlayer();
+};
+
+// --- the video's own keyboard ---------------------------------------------
+// The page holds focus while the player is open (see focusPlayer), so these
+// are the shortcuts: without them Space did what Space does to a page and
+// scrolled the grid behind the modal. They read the same shim as everything
+// else here, so a downloaded copy in <video> answers them like the embed does.
+// Clicking into the frame hands the keyboard to YouTube instead, and its own
+// shortcuts take over from there — one or the other, never neither.
+function togglePlayPause() {
+  if (localMode) {
+    const el = $("localPlayer");
+    if (el.paused) el.play().catch(() => {}); else el.pause();
+    return;
+  }
+  if (!ytPlayer || !ytPlayer.getPlayerState) return;
+  const st = ytPlayer.getPlayerState();
+  const playing = st === window.YT.PlayerState.PLAYING || st === window.YT.PlayerState.BUFFERING;
+  if (playing) ytPlayer.pauseVideo(); else ytPlayer.playVideo();
+}
+
+function seekBy(delta) {
+  const clock = playerClock();
+  if (!clock || !clock.duration) return;
+  const to = Math.max(0, Math.min(clock.duration - 1, clock.current + delta));
+  if (localMode) { $("localPlayer").currentTime = to; return; }
+  if (ytPlayer && ytPlayer.seekTo) ytPlayer.seekTo(to, true);
+  // The tracker writes every few seconds off its own tick; a seek moves the
+  // position far enough that the next write should not be skipped as noise.
+  lastResumeSent = -1;
+}
+
+function toggleMute() {
+  if (localMode) { const el = $("localPlayer"); el.muted = !el.muted; return; }
+  if (!ytPlayer || !ytPlayer.isMuted) return;
+  if (ytPlayer.isMuted()) ytPlayer.unMute(); else ytPlayer.mute();
+}
+
+const PLAYER_KEYS = {
+  " ": togglePlayPause, k: togglePlayPause,
+  ArrowLeft: () => seekBy(-5), ArrowRight: () => seekBy(5),
+  j: () => seekBy(-10), l: () => seekBy(10),
+  m: toggleMute,
+};
+
+document.addEventListener("keydown", (e) => {
+  if ($("playerModal").hidden || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  // A press on a focused control belongs to that control: Space and Enter are
+  // how a keyboard works a button, and the modal has several.
+  if (e.target.closest && e.target.closest("button, a[href]")) return;
+  const act = PLAYER_KEYS[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+  if (!act) return;
+  e.preventDefault();   // Space must never reach the page as a scroll
+  act();
+});
 // f — the shortcut every video player has. Only while the player is open, and
 // never while something is being typed into.
 document.addEventListener("keydown", (e) => {
