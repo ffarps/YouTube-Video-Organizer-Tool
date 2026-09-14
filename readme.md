@@ -116,7 +116,7 @@ a pile of pasted links at once.
 New videos are themed as they arrive by a keyword pass, so the library is
 sorted before you touch anything.
 
-The main page has five tabs.
+The main page has six tabs.
 
 Browse — the grid, with a sidebar of themes and playlists and their counts.
 Search matches whole words rather than substrings: every word you type has to
@@ -148,6 +148,17 @@ library; it prunes theme assignments the current rules no longer justify and
 leaves manual ones alone.
 
 Offline — every saved copy with its size, themes and play count. See below.
+
+History — what you have watched, newest first, with whether each video was
+finished or how far you got, your vote, how many times you played it, and
+whether you have since deleted it. Above it are totals (finished this week,
+time watched, votes, plays, deletions) and a time-per-theme table: how long
+each theme is, how much is left, and that time as steps, from a steps-per-hour
+figure you set there. Deletions are only recorded from the version that added
+this tab onwards.
+
+A video you delete stays deleted: re-syncing a playlist or channel that still
+lists it leaves it out. Paste its link to add it back on purpose.
 
 Themes can be renamed or deleted from the sidebar, and a rename sticks: the
 rule engine will not recreate the old name later. Playlists in the sidebar are

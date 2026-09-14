@@ -40,7 +40,11 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
 - `app/ingest/urls.py` — URL → id canonicalization; `classify_url` decides
   video/playlist/channel/watch_later.
 - `app/ingest/sync.py` — orchestrator; only fetches metadata for ids not
-  already in the DB, so re-syncs are cheap and idempotent.
+  already in the DB, so re-syncs are cheap and idempotent. A playlist,
+  channel or Watch Later sync also skips ids with a `deleted` history event
+  (`db.deleted_video_ids`) — the source still lists them, and a deletion that
+  every re-sync undid would not be a deletion. Adding a link by hand
+  (`add_video`, bulk paste) is the deliberate way back.
 - `app/ingest/ytdlp.py` — flat listing + keyless fallback. Watch Later is
   ONLY reachable this way (Data API blocks WL), needs
   `YTDLP_COOKIES_BROWSER` set.
@@ -171,6 +175,25 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   half of the same problem — the embed is a cross-origin iframe, so a player
   that dies leaves nothing in the app's log at all unless the page says so, and
   "it froze again" is not something anyone can act on.
+- `history_events` — the watch history: `play`, status changes, `rated` and
+  `deleted`, one row each, with **no foreign key to `videos`** on purpose.
+  Everything else about a video cascades away with its row, and "had I watched
+  that before I deleted it?" is a question for after the row is gone, so
+  `_log_deletions` writes a JSON `snapshot` of the video and its watch state
+  *before* the DELETE (both `delete_video` and `delete_videos` go through it).
+  `set_watch_state` logs only changes — every thumb re-sends
+  `status=watched`. `watch_history` is one row per video: `watch_state` for
+  what is still in the library (so activity from before the table existed
+  still lists), the latest snapshot for what is not, and a re-added video
+  drops its old snapshot. A deleted video that was never touched is library
+  clean-up rather than history, so it only appears under the `deleted`
+  filter. `list_themes` also returns `total_sec` / `remaining_sec` (unwatched
+  runtime minus resume points) and `unknown_duration`, a count of unwatched
+  videos with no length that the time cannot include. The History tab turns
+  time left into **steps left** with a steps-per-hour figure kept in
+  localStorage (default 6000): a per-machine preference, not library data.
+  The whole-library row is `history_stats`, not the sum of the theme rows — a
+  video with two themes is in both rows but only takes its runtime once.
 - `app/api/routes.py` — all endpoints; `get_db` opens a **connection per
   request** and closes it when the request ends. One shared connection on
   `app.state.db` is what it used to hand out, and that is a race, not a

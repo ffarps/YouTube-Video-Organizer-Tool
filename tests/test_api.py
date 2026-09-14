@@ -93,6 +93,24 @@ def test_sync_playlist_idempotent(client):
     assert second["already_known"] == 2
 
 
+def test_resync_does_not_bring_back_a_deleted_video(client):
+    url = "https://www.youtube.com/playlist?list=PLtest123"
+    client.post("/sync", json={"url": url})
+    assert client.delete("/videos/guitar000ok").status_code == 200
+
+    again = client.post("/sync", json={"url": url}).json()
+    assert again["added"] == 0
+    assert again["skipped_deleted"] == 1
+    assert client.get("/videos/guitar000ok").status_code == 404
+    # nor does it creep back in as a playlist item
+    videos = client.get("/playlists/PLtest123/videos").json()["videos"]
+    assert [v["id"] for v in videos] == ["aivideo00ok"]
+
+    # adding the link by hand is the deliberate way back
+    assert client.post("/videos", json={"url": "guitar000ok"}).status_code == 201
+    assert client.post("/sync", json={"url": url}).json()["skipped_deleted"] == 0
+
+
 def test_sync_counts_unavailable_videos(client, monkeypatch):
     # a listed id whose metadata can't be fetched (private/deleted) is
     # skipped and counted, not fatal

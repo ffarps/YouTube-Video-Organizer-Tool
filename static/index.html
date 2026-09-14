@@ -409,6 +409,51 @@
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2); border: 1px solid var(--accent2); border-radius: 10px; padding: .6rem 1rem; font-size: .85rem; opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 80vw; }
   #toast.show { opacity: 1; }
   .empty { color: var(--muted); padding: 2rem; text-align: center; }
+  /* --- history --- */
+  .sechead { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 1.6rem 0 .6rem; }
+  .statgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .6rem; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .6rem .75rem; }
+  .stat .k { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; }
+  .stat .v { font-size: 1.35rem; font-weight: 650; margin: .15rem 0; font-variant-numeric: tabular-nums; }
+  .stat .s { color: var(--muted); font-size: .76rem; }
+  #stepsPerHour { width: 90px; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+  .htable { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  .htable th { text-align: right; color: var(--muted); font-weight: 500; font-size: .74rem; padding: .5rem .7rem; border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none; }
+  .htable th:hover { color: var(--text); }
+  .htable th.on { color: var(--accent2); }
+  .htable td { text-align: right; padding: .42rem .7rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .htable th:first-child, .htable td:first-child { text-align: left; }
+  .htable tr:last-child td { border-bottom: 0; }
+  .htable tfoot td { font-weight: 600; border-top: 1px solid var(--border); border-bottom: 0; }
+  .htable .tname { cursor: pointer; }
+  .htable .tname:hover { color: var(--accent2); text-decoration: underline; }
+  .htable .muted { color: var(--muted); }
+  .htable .steps { color: var(--accent2); font-weight: 600; }
+  .pbar { display: inline-block; width: 70px; height: 5px; background: var(--panel2); border-radius: 999px; overflow: hidden; vertical-align: middle; margin-left: .5rem; }
+  .pbar > i { display: block; height: 100%; background: var(--ok); }
+  .hrow { display: flex; gap: .8rem; align-items: center; padding: .5rem; border-bottom: 1px solid var(--border); }
+  .hrow:hover { background: var(--panel); }
+  .hrow .hthumb { position: relative; flex: none; width: 128px; aspect-ratio: 16/9; border-radius: 6px; overflow: hidden; background: var(--panel2); cursor: pointer; }
+  .hrow.gone .hthumb { cursor: default; filter: grayscale(1); opacity: .6; }
+  .hrow .hthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .hrow .hthumb .resumebar { z-index: 1; }
+  .hrow .hmain { flex: 1; min-width: 0; }
+  .hrow .ht { font-weight: 600; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  .hrow.gone .ht { cursor: default; color: var(--muted); }
+  .hrow:not(.gone) .ht:hover { color: var(--accent2); }
+  .hrow .hsub { color: var(--muted); font-size: .78rem; margin-top: .15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hrow .hbadges { display: flex; flex-wrap: wrap; gap: .3rem; justify-content: flex-end; flex: none; max-width: 45%; }
+  .hb { font-size: .72rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); background: var(--panel2); white-space: nowrap; }
+  .hb.fin { border-color: var(--ok); color: var(--ok); }
+  .hb.prog { border-color: var(--accent2); color: var(--accent2); }
+  .hb.del { border-color: var(--accent); color: var(--accent); }
+  .hb.up, .hb.down { background: transparent; }
+  /* the id rule's display:block outranks the UA's [hidden], see #scopeBanner */
+  #histMore { margin: .8rem auto 0; display: block; }
+  #histMore[hidden] { display: none; }
+  .toolbar select#histFilter { width: auto; }
+  @media (max-width: 720px) { .hrow { flex-wrap: wrap; } .hrow .hbadges { max-width: none; justify-content: flex-start; } }
   @media (max-width: 720px) { main { grid-template-columns: 1fr; } nav { border-right: 0; border-bottom: 1px solid var(--border); } }
 </style>
 </head>
@@ -462,6 +507,7 @@
       <button id="tabReview">Review queue</button>
       <button id="tabRules">Rules</button>
       <button id="tabDownloads">Offline</button>
+      <button id="tabHistory">History</button>
     </div>
 
     <div id="viewBrowse">
@@ -551,6 +597,34 @@
         <button id="btnDlRefresh">Refresh</button>
       </div>
       <div id="dlList"></div>
+    </div>
+
+    <div id="viewHistory" hidden>
+      <div id="histStats" class="statgrid"></div>
+
+      <h3 class="sechead">Time per theme</h3>
+      <div class="toolbar">
+        <label title="How many steps you do in an hour of watching — every theme's time left is turned into steps with it">
+          steps per hour <input type="number" id="stepsPerHour" min="0" step="500"></label>
+        <label><input type="checkbox" id="histThemesLeft" checked> only themes with something left</label>
+        <span id="histThemeNote"></span>
+      </div>
+      <div class="tablewrap"><table id="histThemes" class="htable"></table></div>
+
+      <h3 class="sechead">Recently watched</h3>
+      <div class="toolbar">
+        <label>show <select id="histFilter">
+          <option value="all">everything I watched</option>
+          <option value="finished">finished</option>
+          <option value="progress">started, not finished</option>
+          <option value="rated">voted on</option>
+          <option value="rewatched">played more than once</option>
+          <option value="skipped">skipped</option>
+          <option value="deleted">deleted</option>
+        </select></label>
+      </div>
+      <div id="histList"></div>
+      <button id="histMore" hidden>Load more</button>
     </div>
   </section>
 </main>
@@ -2239,6 +2313,8 @@ function closePlayer() {
   dropOverlayLayer();  // never leave the stack stranded in the top layer
   hidePlayerModal();   // ...or the window stretched over a player that's gone
   releasePage();
+  // What you just watched belongs at the top of the list you opened it from.
+  if (currentTab === "History") loadHistory();
 }
 
 $("playerClose").onclick = closePlayer;
@@ -2465,6 +2541,7 @@ async function loadThemes() {
     el.className = "theme-item" + (t.name === activeTheme && !activePlaylist ? " active" : "");
     el.innerHTML = `<span>${t.name}</span>
       <span class="n">${t.video_count}<span class="tren" title="Rename theme (renaming onto an existing theme merges them)">&#9998;</span><span class="pldel" title="Delete theme">&times;</span></span>`;
+    el.title = themeTimeText(t);
     el.onclick = () => { activeTheme = t.name; activePlaylist = null; activeChannel = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
     el.querySelector(".tren").onclick = async (e) => {
       e.stopPropagation();
@@ -2492,6 +2569,17 @@ async function loadThemes() {
     themes.map(t => `<option>${t.name}</option>`).join("");
   sel.value = cur;
   $("themeNames").innerHTML = themes.map(t => `<option value="${t.name}">`).join("");
+  paintThemeTitle();
+}
+
+// The theme's browse title carries how much of it is left. loadBrowse and
+// loadThemes race on every scope change, so both paint it and whichever lands
+// second has the numbers.
+function paintThemeTitle() {
+  if (activeTheme === null || activePlaylist || activeChannel) return;
+  const t = themes.find(x => x.name === activeTheme);
+  $("browseTitle").textContent = activeTheme + ($("offlineOnly").checked ? " · offline" : "")
+    + (t ? ` · ${themeTimeText(t)}` : "");
 }
 
 let browseSeq = 0;
@@ -2653,7 +2741,7 @@ async function loadBrowse() {
       return api(`/videos?${params}`).then(d => d.videos);
     };
   } else {
-    $("browseTitle").textContent = activeTheme + (offline ? " · offline" : "");
+    paintThemeTitle();
     fetchPage = (offset) => {
       const params = new URLSearchParams({ limit: BROWSE_PAGE, offset, sort: $("sortBy").value });
       if (unwatched) params.set("watched", "false");
@@ -2998,11 +3086,275 @@ function patchDlCards(rows) {
   rows.forEach((row, i) => { if (cards[i]) paintDlCard(cards[i], row); });
 }
 
-const views = { Browse: loadBrowse, Recommend: loadRecommendations, Review: loadReview, Rules: loadRules, Downloads: loadDownloads };
+// --- history & time per theme ----------------------------------------------
+// Steps per hour is a per-machine preference, not library data: it lives with
+// the colour theme in localStorage. 6000 is roughly a walking pace of 100 steps
+// a minute; the box is right above the table for whoever walks faster.
+const STEPS_DEFAULT = 6000;
+function stepsPerHour() {
+  const n = parseFloat(localStorage.getItem("stepsPerHour"));
+  return Number.isFinite(n) && n >= 0 ? n : STEPS_DEFAULT;
+}
+// Hours at a glance: "2h 05m", "45m". A theme's length is read in hours, not
+// in the h:mm:ss of a single video.
+function fmtHours(sec) {
+  sec = Math.round(sec || 0);
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  if (!h) return `${m}m`;
+  return m === 60 ? `${h + 1}h 00m` : `${h}h ${String(m).padStart(2, "0")}m`;
+}
+function fmtSteps(sec) {
+  const steps = (sec / 3600) * stepsPerHour();
+  // to the nearest 100: it is an estimate off rounded runtimes, and a figure
+  // like 12,437 claims a precision nothing here has
+  return Math.round(steps / 100) * 100;
+}
+function stepsText(sec) {
+  return `≈ ${fmtSteps(sec).toLocaleString()} steps`;
+}
+// "3 videos · 2h 05m left · ≈ 12,500 steps" — one sentence reused by the
+// sidebar tooltip and the browse title, so the numbers agree everywhere.
+function themeTimeText(t) {
+  const left = t.remaining_sec || 0;
+  const unwatched = (t.total_count || 0) - (t.watched_count || 0);
+  if (!unwatched) return "all watched";
+  const approx = t.unknown_duration ? " (some lengths unknown)" : "";
+  return `${unwatched} left · ${fmtHours(left)}${approx}` +
+    (stepsPerHour() ? ` · ${stepsText(left)}` : "");
+}
+
+function fmtWhen(iso) {
+  if (!iso) return "";
+  const then = new Date(iso), s = (Date.now() - then) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)} d ago`;
+  return then.toLocaleDateString(undefined, { day: "numeric", month: "short",
+    year: then.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+
+const HIST_PAGE = 50;
+let histOffset = 0;
+let histSeq = 0;
+let histThemeSort = "remaining_sec";
+let histStatsData = null;
+let histThemesData = [];
+
+async function loadHistory() {
+  const seq = ++histSeq;
+  const [stats, themeData] = await Promise.all([api("/history/stats"), api("/themes")]);
+  if (seq !== histSeq) return;
+  histStatsData = stats;
+  histThemesData = themeData.themes;
+  renderHistStats();
+  renderHistThemes();
+  histOffset = 0;
+  $("histList").replaceChildren();
+  await loadHistoryPage(seq);
+}
+
+async function loadHistoryPage(seq = histSeq) {
+  const params = new URLSearchParams({ filter: $("histFilter").value, limit: HIST_PAGE, offset: histOffset });
+  const { items } = await api(`/history?${params}`);
+  if (seq !== histSeq) return;
+  histOffset += items.length;
+  const list = $("histList");
+  if (!items.length && !list.children.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = $("histFilter").value === "deleted"
+      ? "Nothing deleted since history started being kept."
+      : "Nothing here yet — play, finish or vote on a video and it shows up here.";
+    list.appendChild(empty);
+  }
+  items.forEach(it => list.appendChild(historyRow(it)));
+  $("histMore").hidden = items.length < HIST_PAGE;
+}
+
+function statTile(label, value, sub) {
+  const el = document.createElement("div");
+  el.className = "stat";
+  el.innerHTML = `<div class="k"></div><div class="v"></div><div class="s"></div>`;
+  el.querySelector(".k").textContent = label;
+  el.querySelector(".v").textContent = value;
+  el.querySelector(".s").textContent = sub || "";
+  return el;
+}
+
+function renderHistStats() {
+  const s = histStatsData;
+  $("histStats").replaceChildren(
+    statTile("Finished", s.finished.toLocaleString(),
+      `${s.finished_week} this week · ${s.finished_month} this month`),
+    statTile("Time watched", fmtHours(s.watched_sec),
+      `${fmtHours(s.watched_sec_week)} this week`),
+    statTile("Started, not finished", s.in_progress.toLocaleString(),
+      s.skipped ? `${s.skipped} skipped` : ""),
+    statTile("Votes", `👍 ${s.thumbs_up} · 👎 ${s.thumbs_down}`, ""),
+    statTile("Plays", s.plays.toLocaleString(),
+      `${s.rewatched} video${s.rewatched === 1 ? "" : "s"} played more than once`),
+    statTile("Deleted", s.deleted.toLocaleString(),
+      `${s.deleted_watched} after watching`),
+    statTile("Left to watch", fmtHours(s.remaining_sec),
+      `${s.remaining_videos.toLocaleString()} videos` +
+        (stepsPerHour() ? ` · ${stepsText(s.remaining_sec)}` : "")),
+  );
+}
+
+const HIST_THEME_COLS = [
+  { key: "name", label: "Theme" },
+  { key: "total_count", label: "Videos" },
+  { key: "progress", label: "Watched" },
+  { key: "total_sec", label: "Total time" },
+  { key: "remaining_sec", label: "Time left" },
+  { key: "steps", label: "Steps left" },
+];
+
+function renderHistThemes() {
+  const table = $("histThemes");
+  const onlyLeft = $("histThemesLeft").checked;
+  const val = (t, key) => key === "progress"
+    ? (t.total_count ? t.watched_count / t.total_count : 0)
+    : key === "steps" ? t.remaining_sec : t[key];
+  let rows = histThemesData.filter(t => t.total_count && (!onlyLeft || t.watched_count < t.total_count));
+  rows.sort((a, b) => histThemeSort === "name"
+    ? a.name.localeCompare(b.name)
+    : (val(b, histThemeSort) - val(a, histThemeSort)) || a.name.localeCompare(b.name));
+
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  HIST_THEME_COLS.forEach(c => {
+    const th = document.createElement("th");
+    th.textContent = c.label;
+    th.title = "Sort by " + c.label.toLowerCase();
+    if (c.key === histThemeSort) th.className = "on";
+    th.onclick = () => { histThemeSort = c.key; renderHistThemes(); };
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach(t => {
+    const tr = document.createElement("tr");
+    const pct = t.total_count ? Math.round(100 * t.watched_count / t.total_count) : 0;
+    tr.innerHTML = `
+      <td class="tname"></td>
+      <td>${t.total_count}</td>
+      <td>${t.watched_count}/${t.total_count}<span class="pbar"><i style="width:${pct}%"></i></span></td>
+      <td>${t.total_sec ? fmtHours(t.total_sec) : `<span class="muted">?</span>`}</td>
+      <td>${t.watched_count === t.total_count ? `<span class="muted">done</span>`
+        : t.remaining_sec ? fmtHours(t.remaining_sec) : `<span class="muted">?</span>`}${t.unknown_duration && t.remaining_sec
+        ? ` <span class="muted" title="${t.unknown_duration} unwatched video(s) have no known length and are not counted">+?</span>` : ""}</td>
+      <td class="steps">${t.remaining_sec && stepsPerHour() ? fmtSteps(t.remaining_sec).toLocaleString() : ""}</td>`;
+    const name = tr.querySelector(".tname");
+    name.textContent = t.name;
+    name.title = "Show this theme's videos";
+    name.onclick = () => {
+      activeTheme = t.name; activePlaylist = null; activeChannel = null;
+      showTab("Browse"); loadBrowse(); refreshSidebar();
+    };
+    tbody.appendChild(tr);
+  });
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="muted">${onlyLeft && histThemesData.length
+      ? "Every theme is fully watched." : "No themes yet."}</td></tr>`;
+  }
+
+  // The library total is its own figure, not the column sum: a video with two
+  // themes is in two rows but only takes its runtime once.
+  const s = histStatsData;
+  const tfoot = document.createElement("tfoot");
+  if (s) {
+    const watched = s.library_videos - s.remaining_videos;
+    const pct = s.library_videos ? Math.round(100 * watched / s.library_videos) : 0;
+    tfoot.innerHTML = `<tr>
+      <td>Whole library</td>
+      <td>${s.library_videos}</td>
+      <td>${watched}/${s.library_videos}<span class="pbar"><i style="width:${pct}%"></i></span></td>
+      <td>${fmtHours(s.library_sec)}</td>
+      <td>${fmtHours(s.remaining_sec)}</td>
+      <td class="steps">${s.remaining_sec && stepsPerHour() ? fmtSteps(s.remaining_sec).toLocaleString() : ""}</td></tr>`;
+  }
+  table.replaceChildren(thead, tbody, tfoot);
+  $("histThemeNote").textContent = stepsPerHour()
+    ? `steps = time left × ${stepsPerHour().toLocaleString()} per hour`
+    : "set steps per hour to see steps left";
+}
+
+function historyRow(it) {
+  const el = document.createElement("div");
+  const gone = !!it.deleted_at;
+  el.className = "hrow" + (gone ? " gone" : "");
+  el.innerHTML = `
+    <div class="hthumb">${it.thumbnail_url ? `<img loading="lazy" alt="">` : ""}${gone ? "" : resumeBarHtml(it)}</div>
+    <div class="hmain"><div class="ht"></div><div class="hsub"></div></div>
+    <div class="hbadges"></div>`;
+  const img = el.querySelector("img");
+  if (img) img.src = it.thumbnail_url;
+  el.querySelector(".ht").textContent = it.title || it.video_id;
+  el.querySelector(".ht").title = it.title || "";
+  const when = gone ? `deleted ${fmtWhen(it.deleted_at)}` : fmtWhen(it.last_activity);
+  el.querySelector(".hsub").textContent =
+    [it.channel_title, it.duration_sec != null ? fmtDur(it.duration_sec) : null, when]
+      .filter(Boolean).join(" · ");
+
+  const badges = [];
+  const badge = (cls, text, title) => {
+    const b = document.createElement("span");
+    b.className = "hb " + cls;
+    b.textContent = text;
+    if (title) b.title = title;
+    badges.push(b);
+  };
+  if (it.status === "watched") {
+    badge("fin", "✓ finished", it.watched_at ? `Finished ${new Date(it.watched_at).toLocaleString()}` : "");
+  } else if (it.resume_seconds && it.duration_sec) {
+    const pct = Math.min(99, Math.round(100 * it.resume_seconds / it.duration_sec));
+    badge("prog", `${pct}% watched`, `Stopped at ${fmtDur(Math.round(it.resume_seconds))}`);
+  } else if (it.status === "skipped") {
+    badge("", "skipped");
+  } else {
+    badge("", "not finished");
+  }
+  if (it.rating > 0) badge("up", "👍", "Thumbs up");
+  else if (it.rating < 0) badge("down", "👎", "Thumbs down");
+  else badge("", "no vote");
+  if (it.play_count) badge("", `▶ ${it.play_count}×`, `Played ${it.play_count} time${it.play_count === 1 ? "" : "s"}`);
+  if (gone) badge("del", "deleted", `Deleted ${new Date(it.deleted_at).toLocaleString()}`);
+  el.querySelector(".hbadges").append(...badges);
+
+  if (!gone) {
+    const play = async () => {
+      try { openPlayer(await api(`/videos/${it.video_id}`)); }
+      catch (err) { toast(err.message, 5000); }
+    };
+    el.querySelector(".hthumb").onclick = play;
+    el.querySelector(".ht").onclick = play;
+  }
+  return el;
+}
+
+$("stepsPerHour").value = stepsPerHour();
+$("stepsPerHour").oninput = (e) => {
+  const n = parseFloat(e.target.value);
+  try { localStorage.setItem("stepsPerHour", Number.isFinite(n) && n >= 0 ? String(n) : "0"); } catch {}
+  if (histStatsData) { renderHistStats(); renderHistThemes(); }
+  loadThemes();  // the sidebar tooltips carry the steps too
+};
+$("histThemesLeft").onchange = renderHistThemes;
+$("histFilter").onchange = () => {
+  histOffset = 0;
+  $("histList").replaceChildren();
+  loadHistoryPage(++histSeq);
+};
+$("histMore").onclick = () => loadHistoryPage();
+
+const views = { Browse: loadBrowse, Recommend: loadRecommendations, Review: loadReview, Rules: loadRules, Downloads: loadDownloads, History: loadHistory };
 let currentTab = "Browse";
 function showTab(name) {
   currentTab = name;
-  for (const t of ["Browse", "Recommend", "Review", "Rules", "Downloads"]) {
+  for (const t of ["Browse", "Recommend", "Review", "Rules", "Downloads", "History"]) {
     $("view" + t).hidden = t !== name;
     $("tab" + t).classList.toggle("active", t === name);
   }
@@ -3014,6 +3366,7 @@ $("tabRecommend").onclick = () => { showTab("Recommend"); loadRecommendations();
 $("tabReview").onclick = () => { showTab("Review"); loadReview(); };
 $("tabRules").onclick = () => { showTab("Rules"); loadRules(); };
 $("tabDownloads").onclick = () => { showTab("Downloads"); loadDownloads(); };
+$("tabHistory").onclick = () => { showTab("History"); loadHistory(); };
 $("btnDlRefresh").onclick = loadDownloads;
 $("btnDlFolder").onclick = () => revealDownload(null);
 // Filtering and sorting are client-side: the offline list is small by design.
@@ -3138,7 +3491,8 @@ $("syncForm").onsubmit = async (e) => {
     toast(result.kind === "video"
       ? `Added: ${result.video?.title || "1 video"}`
       : `${result.title || result.playlist_id}: ${result.added} new, ${result.already_known} already known`
-        + (result.unavailable ? `, ${result.unavailable} skipped (private/deleted)` : ""));
+        + (result.unavailable ? `, ${result.unavailable} skipped (private/deleted)` : "")
+        + (result.skipped_deleted ? `, ${result.skipped_deleted} you deleted left out` : ""));
     $("syncUrl").value = "";
     refreshCurrent();
   } catch (err) { toast("Sync failed: " + err.message, 6000); }

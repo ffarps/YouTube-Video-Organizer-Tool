@@ -177,7 +177,11 @@ def sync_source(
     # Only fetch metadata for videos we don't already have; known ones are
     # just re-linked to the playlist. Keeps re-syncs cheap and idempotent.
     known = db.existing_video_ids(conn, video_ids)
-    new_ids = [vid for vid in video_ids if vid not in known]
+    # A video you deleted stays deleted: the playlist still lists it, and
+    # without this every re-sync would quietly put it back. Adding its link by
+    # hand (add_video / add_videos) is the deliberate way to restore one.
+    deleted = db.deleted_video_ids(conn, video_ids)
+    new_ids = [vid for vid in video_ids if vid not in known and vid not in deleted]
     report({
         "stage": "plan",
         "total_in_source": len(video_ids),
@@ -205,4 +209,6 @@ def sync_source(
         "already_known": len(known),
         # listed in the source but not fetchable (private/deleted)
         "unavailable": len(new_ids) - len(videos),
+        # deleted from the library by you, so not re-added
+        "skipped_deleted": len(deleted),
     }

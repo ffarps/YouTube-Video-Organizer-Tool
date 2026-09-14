@@ -2,7 +2,7 @@ import json
 import re
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Dict, Iterable, List, Optional, Set
 
@@ -104,7 +104,24 @@ CREATE TABLE IF NOT EXISTS downloads (
     completed_at TEXT
 );
 
+-- What happened, in order: plays, finishes, votes and deletions. Deliberately
+-- NO foreign key to `videos`. Everything else about a video cascades away with
+-- its row, and "did I delete that, and had I watched it first?" is exactly the
+-- question a history has to answer after the row is gone — so a deletion
+-- carries a JSON `snapshot` of the video and its watch state as they were.
+-- CREATE IF NOT EXISTS is the whole migration: an older database simply
+-- starts its history on the day it gets this table.
+CREATE TABLE IF NOT EXISTS history_events (
+    id       INTEGER PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    event    TEXT NOT NULL,   -- play | watched | unwatched | skipped | rated | deleted
+    value    INTEGER,         -- rated: -1 | 0 (vote taken back) | +1
+    at       TEXT NOT NULL,
+    snapshot TEXT             -- deleted only, JSON
+);
+
 CREATE INDEX IF NOT EXISTS idx_video_themes_theme ON video_themes(theme_id);
+CREATE INDEX IF NOT EXISTS idx_history_video ON history_events(video_id, event);
 CREATE INDEX IF NOT EXISTS idx_videos_published ON videos(published_at);
 """
 
@@ -297,6 +314,7 @@ def get_video(conn: sqlite3.Connection, video_id: str) -> Optional[dict]:
 
 
 def delete_video(conn: sqlite3.Connection, video_id: str) -> bool:
+    _log_deletions(conn, [video_id])
     cur = conn.execute("DELETE FROM videos WHERE id = ?", (video_id,))
     return cur.rowcount > 0
 
@@ -307,6 +325,7 @@ def delete_videos(conn: sqlite3.Connection, video_ids: Iterable[str]) -> int:
     ids = list(video_ids)
     if not ids:
         return 0
+    _log_deletions(conn, ids)
     placeholders = ",".join("?" * len(ids))
     cur = conn.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", ids)
     return cur.rowcount
@@ -361,13 +380,28 @@ def list_themes(
         )
     else:
         count_expr = "SUM(CASE WHEN w.status = 'watched' THEN 1 ELSE 0 END)"
+    # The durations ignore ``watched``: how long a theme is, and how much of it
+    # is left, is the same answer whichever count the sidebar shows. Left is
+    # the unwatched runtime minus wherever a half-watched video stopped. A
+    # video with no duration (some yt-dlp rows) can't be added up, so it is
+    # counted instead and the UI can say the figure is approximate.
     return [
         dict(r)
         for r in conn.execute(
             f"""
-            SELECT t.id, t.name, t.kind, {count_expr} AS video_count
+            SELECT t.id, t.name, t.kind, {count_expr} AS video_count,
+                   COUNT(vt.video_id) AS total_count,
+                   SUM(CASE WHEN w.status = 'watched' THEN 1 ELSE 0 END) AS watched_count,
+                   COALESCE(SUM(v.duration_sec), 0) AS total_sec,
+                   COALESCE(SUM(CASE WHEN COALESCE(w.status, 'unwatched') != 'watched'
+                       THEN MAX(v.duration_sec - COALESCE(w.resume_seconds, 0), 0)
+                       END), 0) AS remaining_sec,
+                   SUM(CASE WHEN vt.video_id IS NOT NULL AND v.duration_sec IS NULL
+                       AND COALESCE(w.status, 'unwatched') != 'watched'
+                       THEN 1 ELSE 0 END) AS unknown_duration
             FROM themes t
             LEFT JOIN video_themes vt ON vt.theme_id = t.id
+            LEFT JOIN videos v ON v.id = vt.video_id
             LEFT JOIN watch_state w ON w.video_id = vt.video_id
             GROUP BY t.id ORDER BY t.name
             """
@@ -887,6 +921,27 @@ def existing_video_ids(
     }
 
 
+def deleted_video_ids(
+    conn: sqlite3.Connection, video_ids: Iterable[str]
+) -> Set[str]:
+    """Subset of video_ids you deleted and that are not back in the library."""
+    ids = list(video_ids)
+    if not ids:
+        return set()
+    placeholders = ",".join("?" * len(ids))
+    return {
+        r["video_id"]
+        for r in conn.execute(
+            f"""
+            SELECT DISTINCT video_id FROM history_events
+             WHERE event = 'deleted' AND video_id IN ({placeholders})
+               AND NOT EXISTS (SELECT 1 FROM videos WHERE id = video_id)
+            """,
+            ids,
+        )
+    }
+
+
 def themes_for_videos(conn: sqlite3.Connection, video_ids: List[str]) -> dict:
     """video_id -> [theme names]; batch lookup for listings."""
     if not video_ids:
@@ -919,6 +974,15 @@ def set_watch_state(
     conn.execute(
         "INSERT OR IGNORE INTO watch_state (video_id) VALUES (?)", (video_id,)
     )
+    before = conn.execute(
+        "SELECT status, rating FROM watch_state WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    # Only changes go into the history: every thumb re-sends status=watched,
+    # and a log of one video being finished five times over says nothing true.
+    if status is not None and status != before["status"]:
+        log_event(conn, video_id, status)
+    if rating is not None and (rating or None) != before["rating"]:
+        log_event(conn, video_id, "rated", rating)
     if status is not None:
         watched_at = now_iso() if status == "watched" else None
         conn.execute(
@@ -1011,10 +1075,179 @@ def record_play(conn: sqlite3.Connection, video_id: str) -> Optional[int]:
         """,
         (now_iso(), video_id),
     )
+    log_event(conn, video_id, "play")
     conn.commit()
     return conn.execute(
         "SELECT play_count FROM watch_state WHERE video_id = ?", (video_id,)
     ).fetchone()["play_count"]
+
+
+# --- history --------------------------------------------------------------
+
+def log_event(
+    conn: sqlite3.Connection, video_id: str, event: str, value: Optional[int] = None
+) -> None:
+    conn.execute(
+        "INSERT INTO history_events (video_id, event, value, at) VALUES (?, ?, ?, ?)",
+        (video_id, event, value, now_iso()),
+    )
+
+
+def _log_deletions(conn: sqlite3.Connection, video_ids: List[str]) -> None:
+    """Record what is about to be deleted while there is still something to
+    read: the cascade takes the watch state with the video."""
+    placeholders = ",".join("?" * len(video_ids))
+    conn.execute(
+        f"""
+        INSERT INTO history_events (video_id, event, at, snapshot)
+        SELECT v.id, 'deleted', ?, json_object(
+                 'title', v.title, 'channel_title', v.channel_title,
+                 'channel_id', v.channel_id, 'thumbnail_url', v.thumbnail_url,
+                 'duration_sec', v.duration_sec,
+                 'status', COALESCE(w.status, 'unwatched'), 'rating', w.rating,
+                 'play_count', COALESCE(w.play_count, 0),
+                 'resume_seconds', w.resume_seconds,
+                 'watched_at', w.watched_at, 'last_played_at', w.last_played_at)
+          FROM videos v LEFT JOIN watch_state w ON w.video_id = v.id
+         WHERE v.id IN ({placeholders})
+        """,
+        [now_iso(), *video_ids],
+    )
+
+
+# One row per video: the library's own watch state for a video still here, the
+# deletion snapshot for one that is not. A video deleted and later added again
+# is a library video — its old snapshot is history it has outgrown.
+_HISTORY_ROWS = """
+WITH ev AS (
+    SELECT video_id, MAX(at) AS last_event FROM history_events
+     WHERE event != 'deleted' GROUP BY video_id
+),
+rows AS (
+    SELECT v.id AS video_id, v.title, v.channel_title, v.channel_id,
+           v.thumbnail_url, v.duration_sec,
+           COALESCE(w.status, 'unwatched') AS status, w.rating,
+           COALESCE(w.play_count, 0) AS play_count, w.resume_seconds,
+           w.watched_at, w.last_played_at,
+           -- scalar MAX is NULL if any argument is, hence the '' stand-ins
+           NULLIF(MAX(COALESCE(ev.last_event, ''), COALESCE(w.last_played_at, ''),
+                      COALESCE(w.watched_at, ''), COALESCE(w.resume_at, '')), '')
+               AS last_activity,
+           NULL AS deleted_at
+      FROM watch_state w
+      JOIN videos v ON v.id = w.video_id
+      LEFT JOIN ev ON ev.video_id = w.video_id
+    UNION ALL
+    SELECT h.video_id, json_extract(h.snapshot, '$.title'),
+           json_extract(h.snapshot, '$.channel_title'),
+           json_extract(h.snapshot, '$.channel_id'),
+           json_extract(h.snapshot, '$.thumbnail_url'),
+           json_extract(h.snapshot, '$.duration_sec'),
+           json_extract(h.snapshot, '$.status'),
+           json_extract(h.snapshot, '$.rating'),
+           json_extract(h.snapshot, '$.play_count'),
+           json_extract(h.snapshot, '$.resume_seconds'),
+           json_extract(h.snapshot, '$.watched_at'),
+           json_extract(h.snapshot, '$.last_played_at'),
+           h.at, h.at
+      FROM history_events h
+     WHERE h.event = 'deleted'
+       AND h.id = (SELECT MAX(d.id) FROM history_events d
+                    WHERE d.video_id = h.video_id AND d.event = 'deleted')
+       AND NOT EXISTS (SELECT 1 FROM videos WHERE id = h.video_id)
+)
+"""
+
+_ACTIVITY = (
+    "(play_count > 0 OR status != 'unwatched' OR rating IS NOT NULL"
+    " OR resume_seconds IS NOT NULL)"
+)
+
+HISTORY_FILTERS = {
+    # A deleted video you never touched is library clean-up, not something you
+    # watched: it is listed under "deleted", not in the history itself.
+    "all": _ACTIVITY,
+    "finished": "status = 'watched'",
+    "progress": "status != 'watched' AND resume_seconds IS NOT NULL AND deleted_at IS NULL",
+    "rated": "rating IS NOT NULL",
+    "rewatched": "play_count > 1",
+    "skipped": "status = 'skipped'",
+    "deleted": "deleted_at IS NOT NULL",
+}
+
+
+def watch_history(
+    conn: sqlite3.Connection, filter: str = "all", limit: int = 50, offset: int = 0
+) -> List[dict]:
+    """Videos you have done something with, most recent first."""
+    where = HISTORY_FILTERS.get(filter, _ACTIVITY)
+    return [
+        dict(r)
+        for r in conn.execute(
+            _HISTORY_ROWS
+            + f"SELECT * FROM rows WHERE {where}"
+            " ORDER BY last_activity IS NULL, last_activity DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+    ]
+
+
+def history_stats(conn: sqlite3.Connection, now: Optional[datetime] = None) -> dict:
+    """Totals over the history, plus how much of the library is left."""
+    now = now or datetime.now(timezone.utc)
+    week = (now - timedelta(days=7)).isoformat(timespec="seconds")
+    month = (now - timedelta(days=30)).isoformat(timespec="seconds")
+    stats = dict(
+        conn.execute(
+            """
+            SELECT
+              SUM(CASE WHEN w.status = 'watched' THEN 1 ELSE 0 END) AS finished,
+              SUM(CASE WHEN w.status = 'watched' AND w.watched_at >= :week
+                       THEN 1 ELSE 0 END) AS finished_week,
+              SUM(CASE WHEN w.status = 'watched' AND w.watched_at >= :month
+                       THEN 1 ELSE 0 END) AS finished_month,
+              -- finished runtimes plus how far into the unfinished ones you got
+              COALESCE(SUM(CASE WHEN w.status = 'watched' THEN v.duration_sec
+                                ELSE w.resume_seconds END), 0) AS watched_sec,
+              COALESCE(SUM(CASE WHEN w.status = 'watched' AND w.watched_at >= :week
+                                THEN v.duration_sec END), 0) AS watched_sec_week,
+              SUM(CASE WHEN w.status != 'watched' AND w.resume_seconds IS NOT NULL
+                       THEN 1 ELSE 0 END) AS in_progress,
+              SUM(CASE WHEN w.status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+              SUM(CASE WHEN w.rating = 1 THEN 1 ELSE 0 END) AS thumbs_up,
+              SUM(CASE WHEN w.rating = -1 THEN 1 ELSE 0 END) AS thumbs_down,
+              COALESCE(SUM(w.play_count), 0) AS plays,
+              SUM(CASE WHEN w.play_count > 1 THEN 1 ELSE 0 END) AS rewatched
+            FROM watch_state w JOIN videos v ON v.id = w.video_id
+            """,
+            {"week": week, "month": month},
+        ).fetchone()
+    )
+    stats.update(
+        conn.execute(
+            _HISTORY_ROWS
+            + """
+            SELECT COUNT(*) AS deleted,
+                   SUM(CASE WHEN status = 'watched' THEN 1 ELSE 0 END) AS deleted_watched
+              FROM rows WHERE deleted_at IS NOT NULL
+            """
+        ).fetchone()
+    )
+    stats.update(
+        conn.execute(
+            """
+            SELECT COUNT(*) AS library_videos,
+                   COALESCE(SUM(v.duration_sec), 0) AS library_sec,
+                   COALESCE(SUM(CASE WHEN COALESCE(w.status, 'unwatched') != 'watched'
+                       THEN MAX(v.duration_sec - COALESCE(w.resume_seconds, 0), 0)
+                       END), 0) AS remaining_sec,
+                   SUM(CASE WHEN COALESCE(w.status, 'unwatched') != 'watched'
+                       THEN 1 ELSE 0 END) AS remaining_videos
+              FROM videos v LEFT JOIN watch_state w ON w.video_id = v.id
+            """
+        ).fetchone()
+    )
+    return {k: (v or 0) for k, v in stats.items()}
 
 
 # --- playlists ------------------------------------------------------------

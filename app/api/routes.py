@@ -518,6 +518,25 @@ def update_watch_state(
     return db.get_video(conn, video_id)
 
 
+@router.get("/history")
+def watch_history(
+    filter: str = "all",
+    limit: int = 50,
+    offset: int = 0,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """Videos you have played, finished, voted on or deleted, newest first.
+    Deleted ones come back from the snapshot taken as they went."""
+    if filter not in db.HISTORY_FILTERS:
+        raise HTTPException(status_code=400, detail=f"Unknown filter: {filter}")
+    return {"items": db.watch_history(conn, filter, limit, offset)}
+
+
+@router.get("/history/stats")
+def history_stats(conn: sqlite3.Connection = Depends(get_db)):
+    return db.history_stats(conn)
+
+
 @router.post("/videos/{video_id}/position")
 def update_resume_position(
     video_id: str,
