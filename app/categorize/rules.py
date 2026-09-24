@@ -63,17 +63,15 @@ FIELD_WEIGHTS = (
 # of evidence left a third of every playlist untagged.
 MIN_EVIDENCE = 1 / 3
 
-# Noise is filtered by *relative* strength instead: boilerplate ("watch more
-# videos", "use code ...", "Xbox Series X") shows up once in a description
-# while the real topic is in the title, so drop themes supported by less than
-# this fraction of the winner's evidence. Themes that tie all survive, which
-# is what keeps multi-label videos multi-label.
-KEEP_RATIO = 0.6
-
-# ...but a full unit of evidence (a title or channel hit) is strong on its own
-# and never gets filtered out, however dominant the winner is: "AI podcast
-# interview" is a podcast twice over and still genuinely about AI.
+# A full unit of evidence is a title or channel hit: strong on its own, where
+# anything less is description or tag text written for the algorithm.
 STRONG_EVIDENCE = 1.0
+
+# The winner is the video's theme; a runner-up only joins it with strong
+# evidence of its own ("AI podcast interview" is a podcast and genuinely about
+# AI), and never more than one. Keeping every theme near the winner is what
+# used to hand a sponsor-heavy description five themes at once.
+MAX_KEYWORD_THEMES = 2
 
 _COMPILED: Dict[str, List[re.Pattern]] = {
     theme: [
@@ -102,6 +100,23 @@ def _compile_expression(expression: str) -> re.Pattern:
     return re.compile(
         r"(?<![\w-])" + re.escape(expression) + r"(?![\w-])", re.IGNORECASE
     )
+
+
+def _pick(evidence: Dict[str, float]) -> List[str]:
+    """Choose which keyword themes a video gets from its evidence.
+
+    A weak winner that ties with another theme means nothing but boilerplate
+    matched ("use code", "new episode", "privacy" from a VPN read), so the
+    video gets no keyword theme at all: it lands under "no theme", where it
+    can be seen and themed by hand, rather than under a guess."""
+    ranked = sorted(evidence.items(), key=lambda kv: kv[1], reverse=True)
+    if not ranked:
+        return []
+    (winner, best), rest = ranked[0], ranked[1:]
+    if best < STRONG_EVIDENCE and rest and abs(rest[0][1] - best) < 1e-9:
+        return []
+    runners_up = [theme for theme, weight in rest if weight >= STRONG_EVIDENCE]
+    return [winner] + runners_up[: MAX_KEYWORD_THEMES - 1]
 
 
 def evaluate(
@@ -147,14 +162,10 @@ def evaluate(
         if weight >= MIN_EVIDENCE:
             evidence[theme] = weight
 
-    scores: Dict[str, float] = {}
-    if evidence:
-        cutoff = min(STRONG_EVIDENCE, max(evidence.values()) * KEEP_RATIO)
-        scores = {
-            theme: min(0.95, 0.6 + 0.15 * (weight - 1))
-            for theme, weight in evidence.items()
-            if weight >= cutoff
-        }
+    scores = {
+        theme: min(0.95, 0.6 + 0.15 * (evidence[theme] - 1))
+        for theme in _pick(evidence)
+    }
     # custom rules are user-authored: they never lose to a keyword theme
     for theme, confidence in custom_scores.items():
         scores[theme] = max(scores.get(theme, 0.0), confidence)
@@ -185,16 +196,22 @@ def reapply(conn: sqlite3.Connection) -> dict:
     """Re-run keyword + custom rules over every stored video and reconcile.
 
     Rule-sourced assignments the current rules no longer justify are removed;
-    manual and embedding assignments are never touched. An exclusive rule
-    match removes everything but its theme (regardless of source)."""
+    manual and embedding assignments are never touched. A video themed by hand
+    gets no rule themes on top: the hand-picked ones are the answer, and a
+    keyword guess beside them is exactly the noise that was corrected. An
+    exclusive rule match removes everything but its theme (regardless of
+    source)."""
     custom_rules = db.list_theme_rules(conn)
     overrides = db.builtin_theme_overrides(conn)
     videos = db.all_videos(conn)
     existing = db.themes_for_videos(conn, [v["id"] for v in videos])
+    hand_themed = db.manually_themed_video_ids(conn)
     added = 0
     removed = 0
     for video in videos:
         assignments, exclusive = evaluate(video, custom_rules, overrides)
+        if video["id"] in hand_themed and not exclusive:
+            assignments = []
         fresh = [name for name, _ in assignments]
         if exclusive:
             removed += db.remove_other_themes(conn, video["id"], fresh)

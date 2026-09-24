@@ -97,6 +97,45 @@ def test_equal_scores_keep_multi_label():
     assert "AI" in themes and "Podcasts" in themes
 
 
+def test_weak_tie_gets_no_theme_instead_of_all_of_them():
+    # real-world case: nothing in the title, and a description whose sponsor
+    # and link text matched five unrelated themes once each — all five used to
+    # tie and all five were kept
+    video = {
+        "title": "Total Solar Eclipse from 92,000 Feet",
+        "description": (
+            "Get my website template, use code SKY for 10% off. Shot on a "
+            "Sony lens. Stay focus'd: new game every Friday, plus food tips."
+        ),
+    }
+    assert _themes(video) == []
+
+
+def test_weak_but_clear_winner_still_themes():
+    # one theme with two description hits beats one with a single hit
+    video = {
+        "title": "My week",
+        "description": "Budget spreadsheet and how I invest. New episode Friday.",
+    }
+    assert _themes(video) == ["Personal Finance"]
+
+
+def test_at_most_two_keyword_themes():
+    # three title hits used to mean three themes
+    themes = _themes({"title": "Tech I use as a cybersecurity engineer"})
+    assert len(themes) == 2
+
+
+def test_weak_runner_up_does_not_join_the_winner():
+    # a single stray tag was close enough to a weak winner to ride along
+    video = {
+        "title": "My week",
+        "description": "Budget spreadsheet and how I invest.",
+        "tags": ["camera"],
+    }
+    assert _themes(video) == ["Personal Finance"]
+
+
 def _rule(pattern, theme, exclusive=False):
     return {"id": 1, "theme_name": theme, "pattern": pattern, "exclusive": exclusive}
 
@@ -140,30 +179,57 @@ def test_exclusive_rule_ignored_when_not_matching():
     assert "Lex" not in themes and "AI" in themes and "Podcasts" in themes
 
 
+def _video_theme_names(conn, video_id):
+    return {
+        r["name"]
+        for r in conn.execute(
+            """
+            SELECT t.name FROM themes t
+            JOIN video_themes vt ON vt.theme_id = t.id
+            WHERE vt.video_id = ?
+            """,
+            (video_id,),
+        )
+    }
+
+
 def test_reapply_prunes_stale_rule_themes(conn):
     db.upsert_video(conn, {"id": "aivideo00ok", "title": "Machine learning explained"})
-    # simulate an old noisy auto-assignment plus a user-made one
+    # simulate an old noisy auto-assignment
+    stale = db.get_or_create_theme(conn, "Watches")
+    db.assign_theme(conn, "aivideo00ok", stale, 0.6, "rule")
+    conn.commit()
+
+    result = rules.reapply(conn)
+    themes = _video_theme_names(conn, "aivideo00ok")
+    assert "AI" in themes  # re-derived by the current rules
+    assert "Watches" not in themes  # stale rule assignment pruned
+    assert result["themes_removed"] == 1
+
+
+def test_reapply_leaves_hand_themed_videos_alone(conn):
+    # the keywords say AI, but the user already decided what this video is:
+    # a rule theme beside theirs is the noise they corrected
+    db.upsert_video(conn, {"id": "aivideo00ok", "title": "Machine learning explained"})
     stale = db.get_or_create_theme(conn, "Watches")
     db.assign_theme(conn, "aivideo00ok", stale, 0.6, "rule")
     manual = db.get_or_create_theme(conn, "Favorites")
     db.assign_theme(conn, "aivideo00ok", manual, 1.0, "manual")
     conn.commit()
 
-    result = rules.reapply(conn)
-    themes = {
-        r["name"]
-        for r in conn.execute(
-            """
-            SELECT t.name FROM themes t
-            JOIN video_themes vt ON vt.theme_id = t.id
-            WHERE vt.video_id = 'aivideo00ok'
-            """
-        )
-    }
-    assert "AI" in themes  # re-derived by the current rules
-    assert "Watches" not in themes  # stale rule assignment pruned
-    assert "Favorites" in themes  # manual assignment untouched
-    assert result["themes_removed"] == 1
+    rules.reapply(conn)
+    assert _video_theme_names(conn, "aivideo00ok") == {"Favorites"}
+
+
+def test_exclusive_rule_still_overrides_hand_themes(conn):
+    db.upsert_video(conn, {"id": "lexvideo0ok", "title": "Lex Fridman podcast"})
+    manual = db.get_or_create_theme(conn, "Favorites")
+    db.assign_theme(conn, "lexvideo0ok", manual, 1.0, "manual")
+    db.add_theme_rule(conn, "Lex", "lex fridman", exclusive=True)
+    conn.commit()
+
+    rules.reapply(conn)
+    assert _video_theme_names(conn, "lexvideo0ok") == {"Lex"}
 
 
 def test_name_overrides_remap_builtin_theme():

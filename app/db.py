@@ -572,6 +572,15 @@ def remove_other_themes(
     return cur.rowcount
 
 
+def manually_themed_video_ids(conn: sqlite3.Connection) -> set:
+    return {
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT video_id FROM video_themes WHERE source = 'manual'"
+        )
+    }
+
+
 def remove_stale_rule_themes(
     conn: sqlite3.Connection, video_id: str, keep_names: Iterable[str]
 ) -> int:

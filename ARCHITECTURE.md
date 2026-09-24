@@ -123,13 +123,19 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   themes applied at ingest (URLs stripped from text first — "watch?v=" used
   to match the Watches theme). Evidence is field-weighted (title/channel
   1.0, tags 0.5, description ⅓ — tags and descriptions are keyword spam).
-  One mention anywhere qualifies (`MIN_EVIDENCE` = ⅓); noise is filtered
-  *relatively* instead — a theme is dropped if it has less than `KEEP_RATIO`
-  (0.6) of the winner's evidence, unless it reaches `STRONG_EVIDENCE` (1.0,
-  a title/channel hit), which always survives. Requiring a full unit to
-  qualify was what left ~40% of a playlist untagged. `rules.reapply`
-  reconciles: prunes rule-sourced assignments the current rules no longer
-  justify, never touches manual/embedding ones. User-defined rules (`theme_rules` table,
+  One mention anywhere qualifies (`MIN_EVIDENCE` = ⅓) — requiring a full
+  unit was what left ~40% of a playlist untagged — but `_pick` then keeps
+  the winner and at most one runner-up (`MAX_KEYWORD_THEMES`), and the
+  runner-up only with `STRONG_EVIDENCE` (1.0, a title/channel hit). A *weak*
+  winner that ties another theme gets **no** keyword theme: that is
+  sponsor/link text matching once each, and it used to keep all of them —
+  measured against 876 hand-themed videos, 940 wrong tags to 201 right ones.
+  An unthemed video shows under "no theme only"; a wrong tag just looks
+  broken. `rules.reapply` reconciles: prunes rule-sourced assignments the
+  current rules no longer justify, never touches manual/embedding ones, and
+  adds nothing to a video with a manual theme (only an exclusive rule
+  overrides one). It still has no memory of a rule theme removed by hand, so
+  the next reapply puts it back. User-defined rules (`theme_rules` table,
   managed from the UI Rules tab via `/rules`) add expression → theme
   mappings on top; an *exclusive* rule gives matching videos ONLY that
   theme. `rules.reapply` (POST `/rules/apply`) re-runs everything over
