@@ -435,6 +435,46 @@
       #bulkModal[hidden] {
         display: none;
       }
+      /* Cinema mode (c, or the button in the title bar): everything the app draws
+     around the video fades almost to black while it plays, and phases back in
+     when the end panel appears (.ending). The rows keep their own panel colour
+     and fade as a whole — turning them black instead would leave a light
+     theme's dark text unreadable on black even when you reach for it. Hover
+     or focus brings a row back at once; nothing is disabled. YouTube's own
+     controls live in a cross-origin frame and cannot be restyled from here. */
+      #playerModal {
+        transition: background-color 0.8s;
+      }
+      #playerBox {
+        transition: background-color 0.8s, border-color 0.8s;
+      }
+      #playerHead,
+      #playerActions {
+        background: var(--panel);
+        transition: opacity 0.8s;
+      }
+      #playerModal.cinema:not(.ending) {
+        background: #000;
+      }
+      #playerModal.cinema:not(.ending) #playerBox {
+        background: #000;
+        border-color: transparent;
+      }
+      #playerModal.cinema:not(.ending) #playerHead,
+      #playerModal.cinema:not(.ending) #playerActions {
+        opacity: 0.12;
+      }
+      #playerModal.cinema:not(.ending) #playerHead:hover,
+      #playerModal.cinema:not(.ending) #playerHead:focus-within,
+      #playerModal.cinema:not(.ending) #playerActions:hover,
+      #playerModal.cinema:not(.ending) #playerActions:focus-within {
+        opacity: 1;
+        transition: opacity 0.2s;
+      }
+      #playerCinema[aria-pressed="true"] {
+        border-color: var(--accent2);
+        color: var(--accent2);
+      }
       #bulkBox {
         width: min(640px, 94vw);
         background: var(--panel);
@@ -2339,6 +2379,7 @@
         <div id="playerHead">
           <span id="playerTitle"></span>
           <span class="headbtns">
+            <button id="playerCinema" aria-pressed="false" title="Cinema mode (c): dim everything but the video until it ends">&#9680;</button>
             <button id="playerFs" title="Fullscreen (f)">&#9974;</button>
             <button id="playerClose" title="Close (Esc)">&times;</button>
           </span>
@@ -3697,10 +3738,12 @@
         }
         const card = $("rateCard");
         card.classList.add("show");
+        $("playerModal").classList.add("ending");
       }
 
       function hideRateCard() {
         $("rateCard").classList.remove("show");
+        $("playerModal").classList.remove("ending");
         $("nextUp").hidden = true;
         $("rateExtra").hidden = true;
       }
@@ -4584,7 +4627,29 @@
         l: () => seekBy(10),
         m: toggleMute,
         d: askDrop,
+        c: toggleCinema,
       };
+
+      // Cinema mode, kept per machine like the colour theme. The class sits on the
+      // modal for as long as the mode is on; .ending is what hands the chrome back
+      // when the video is over, so there is no timer to keep in step.
+      let cinema = false;
+      try {
+        cinema = localStorage.getItem("cinema") === "1";
+      } catch {}
+      function paintCinema() {
+        $("playerModal").classList.toggle("cinema", cinema);
+        $("playerCinema").setAttribute("aria-pressed", String(cinema));
+      }
+      function toggleCinema() {
+        cinema = !cinema;
+        try {
+          localStorage.setItem("cinema", cinema ? "1" : "0");
+        } catch {}
+        paintCinema();
+      }
+      $("playerCinema").onclick = toggleCinema;
+      paintCinema();
 
       document.addEventListener("keydown", (e) => {
         if ($("playerModal").hidden || e.ctrlKey || e.altKey || e.metaKey)

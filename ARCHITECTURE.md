@@ -460,6 +460,18 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   fullscreen another way; they are no longer the ordinary path. Note
   `#playerHost:fullscreen` must clear the 16/9 `aspect-ratio`, or the host keeps
   a 16/9 box on a screen that isn't.
+  **Cinema mode** (`c`, `#playerCinema`, `cinema` in localStorage) is the
+  windowed counterpart: the backdrop and the box go black and `#playerHead` /
+  `#playerActions` fade to 12% — still there, still clickable, back at once on
+  hover or focus. The rows carry their own `--panel` background and fade as a
+  whole, because blacking them out instead leaves a light theme's dark text
+  unreadable on black. `enterDoneMode` adds `.ending` to the modal and
+  `hideRateCard` removes it, so the chrome phases back in with the end panel
+  and out again after, with no timer of its own. YouTube's own controls sit in
+  the cross-origin frame and are out of reach; they fade by themselves when
+  the mouse is still. The fades are CSS transitions, so in a pane that is not
+  being painted they sit at their first frame — `getAnimations().forEach(a =>
+  a.finish())` before reading computed styles.
   **An open player owns the page.** `grabPage`/`releasePage` put `inert` on the
   header, the grid and the selection bar and `overflow: hidden` on the body, so
   Tab cannot walk out of the modal into cards nobody can see and Space cannot
