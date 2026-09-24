@@ -131,6 +131,10 @@
         align-items: center;
         gap: 0.6rem;
       }
+      /* display: flex above outranks the UA's [hidden] (see #scopeBanner) */
+      #syncProgress[hidden] {
+        display: none;
+      }
       #syncProgress .barwrap {
         flex: 1;
         height: 8px;
@@ -712,11 +716,16 @@
      watching. YouTube's controls grow with the player, hence the taller
      clearance in fullscreen (`:popover-open` is the YouTube-fullscreen case,
      where the stack is lifted into the top layer). */
+      /* The pills' width caps are percentages of this column, and a column that
+     is only as wide as its contents makes those circular: a pill capped at
+     60% of its own width pushed its button out of its own border. The column
+     takes its limit from the frame instead, and the pills fill up to it. */
       #cornerStack {
         position: absolute;
         right: 16px;
         bottom: 64px;
         z-index: 3;
+        max-width: 80%;
         display: flex;
         flex-direction: column;
         align-items: flex-end;
@@ -802,7 +811,7 @@
         display: flex;
         align-items: center;
         gap: 0.7rem;
-        max-width: min(420px, 60%);
+        max-width: min(420px, 100%);
         padding: 0.5rem 0.7rem;
         border-radius: 12px;
         background: rgba(10, 12, 16, 0.88);
@@ -877,7 +886,7 @@
         display: flex;
         align-items: center;
         gap: 0.6rem;
-        max-width: min(420px, 60%);
+        max-width: min(420px, 100%);
         padding: 0.4rem 0.5rem 0.4rem 0.85rem;
         border-radius: 999px;
         background: rgba(10, 12, 16, 0.88);
@@ -920,7 +929,7 @@
         display: flex;
         align-items: center;
         gap: 0.6rem;
-        max-width: min(420px, 60%);
+        max-width: min(420px, 100%);
         padding: 0.4rem 0.5rem 0.4rem 0.85rem;
         border-radius: 999px;
         background: rgba(10, 12, 16, 0.88);
@@ -963,7 +972,7 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        max-width: min(480px, 80%);
+        max-width: min(480px, 100%);
         padding: 0.45rem 0.5rem 0.45rem 0.85rem;
         border-radius: 12px;
         background: rgba(34, 14, 14, 0.93);
