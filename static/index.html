@@ -109,7 +109,7 @@
         white-space: nowrap;
       }
       header h1 span {
-        color: var(--accent);
+        color: var(--accent2);
       }
       #syncForm {
         display: flex;
@@ -164,8 +164,8 @@
         border-color: var(--accent2);
       }
       button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
+        background: var(--accent2);
+        border-color: var(--accent2);
         color: #fff;
       }
       select {
@@ -459,6 +459,15 @@
       #playerModal.cinema:not(.ending) #playerBox {
         background: #000;
         border-color: transparent;
+      }
+      /* Not fullscreen — the window's own title bar stays usable — but the box
+     takes the whole window: the widest 16/9 frame that still leaves the two
+     (faded) rows their height. Kept through .ending, so the frame does not
+     jump when the end panel comes up. */
+      #playerModal.cinema #playerBox {
+        width: min(100vw, calc((100vh - 104px) * 16 / 9));
+        max-height: 100vh;
+        border-radius: 0;
       }
       #playerModal.cinema:not(.ending) #playerHead,
       #playerModal.cinema:not(.ending) #playerActions {
@@ -2379,7 +2388,6 @@
         <div id="playerHead">
           <span id="playerTitle"></span>
           <span class="headbtns">
-            <button id="playerCinema" aria-pressed="false" title="Cinema mode (c): dim everything but the video until it ends">&#9680;</button>
             <button id="playerFs" title="Fullscreen (f)">&#9974;</button>
             <button id="playerClose" title="Close (Esc)">&times;</button>
           </span>
@@ -2505,6 +2513,13 @@
             title="Rebuild the player from where you are — for when the video stops responding"
           >
             &#8635; reload player
+          </button>
+          <button
+            id="playerCinema"
+            aria-pressed="false"
+            title="Cinema mode (c): the video fills the window and everything else fades until it ends"
+          >
+            &#9680; cinema
           </button>
           <a id="playerYt" target="_blank" rel="noopener"
             >open on YouTube &#8599;</a
@@ -4635,7 +4650,7 @@
       // when the video is over, so there is no timer to keep in step.
       let cinema = false;
       try {
-        cinema = localStorage.getItem("cinema") === "1";
+        cinema = localStorage.getItem("cinema") !== "0"; // on unless switched off
       } catch {}
       function paintCinema() {
         $("playerModal").classList.toggle("cinema", cinema);

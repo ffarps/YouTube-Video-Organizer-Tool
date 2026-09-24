@@ -318,10 +318,16 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
 - `static/index.html` — the whole frontend, vanilla JS, served at `/`.
   No build step; talks to the API with fetch. A colour theme is
   `html[data-theme=...]` redefining seven variables and nothing else, so a
-  palette never touches a component: `--accent` is the **warm** slot — it is
-  the primary button but also delete, error and thumbs-down, so it stays
-  red/orange in every theme — and `--accent2` is the informational one (tabs,
-  progress, offline badges, links), which is where a theme gets its character.
+  palette never touches a component: `--accent` is the **warm** slot — delete,
+  drop, error and thumbs-down, so it stays red/orange in every theme — and
+  `--accent2` is the informational one (tabs, progress, offline badges,
+  links), which is where a theme gets its character. The "go" buttons
+  (`button.primary`: Sync, Recommend, Add rule…) and the header's play mark
+  are `--accent2` too: the icon's play triangle is Sepia's `--accent2`, and a
+  warm primary button read as the app's colour being red while the icon said
+  otherwise. Warm now only ever means "this removes something". The icon
+  itself is drawn by `scripts/make_icon.py`, each size on its own so the mesh
+  survives at 16px.
   Each block also sets `color-scheme`, because the native select, checkboxes
   and scrollbars are the one part of the UI CSS cannot repaint and they render
   light over a dark page without it. The choice is applied by an inline script
@@ -460,8 +466,11 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   fullscreen another way; they are no longer the ordinary path. Note
   `#playerHost:fullscreen` must clear the 16/9 `aspect-ratio`, or the host keeps
   a 16/9 box on a screen that isn't.
-  **Cinema mode** (`c`, `#playerCinema`, `cinema` in localStorage) is the
-  windowed counterpart: the backdrop and the box go black and `#playerHead` /
+  **Cinema mode** (`c`, `#playerCinema` in the bottom row, `cinema` in
+  localStorage — **on unless switched off**) is the windowed counterpart: the
+  box takes the whole window (the widest 16/9 frame that still leaves the two
+  rows their ~100px, kept through `.ending` so the frame never jumps), the
+  backdrop and the box go black and `#playerHead` /
   `#playerActions` fade to 12% — still there, still clickable, back at once on
   hover or focus. The rows carry their own `--panel` background and fade as a
   whole, because blacking them out instead leaves a light theme's dark text
