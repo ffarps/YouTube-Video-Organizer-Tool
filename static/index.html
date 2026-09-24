@@ -456,18 +456,127 @@
       #playerModal.cinema:not(.ending) {
         background: #000;
       }
-      #playerModal.cinema:not(.ending) #playerBox {
-        background: #000;
-        border-color: transparent;
+      /* Cinema layout. A 16/9 video in a window that is itself roughly 16/9 has
+     no height to spare, so rows above and below the frame shrank the picture
+     and left thick black bars at the sides. In cinema the two rows turn into
+     rails *beside* the frame instead — the head (close, fullscreen) on the
+     left, the actions on the right, icon-only — and the frame gets the whole
+     window height. The rails sit in space that was black anyway, and nothing
+     is laid over YouTube's own controls at the bottom of the frame. Not
+     fullscreen: the window's title bar stays. Kept through .ending, so the
+     frame never jumps when the end panel comes up. */
+      #playerModal.cinema {
+        --rail: 56px;
+        --cine-w: min(calc(100vw - 2 * var(--rail)), calc(100vh * 16 / 9));
+        overflow: hidden;
       }
-      /* Not fullscreen — the window's own title bar stays usable — but the box
-     takes the whole window: the widest 16/9 frame that still leaves the two
-     (faded) rows their height. Kept through .ending, so the frame does not
-     jump when the end panel comes up. */
       #playerModal.cinema #playerBox {
-        width: min(100vw, calc((100vh - 104px) * 16 / 9));
+        position: relative;
+        z-index: 1;
+        flex-direction: row;
+        width: auto;
         max-height: 100vh;
+        background: transparent;
+        border: 0;
         border-radius: 0;
+        overflow: visible;
+      }
+      #playerModal.cinema #playerHost:not(:fullscreen) {
+        width: var(--cine-w);
+        flex: none;
+      }
+      #playerModal.cinema #playerHead,
+      #playerModal.cinema #playerActions {
+        width: var(--rail);
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        align-self: stretch;
+        gap: 0.5rem;
+        padding: 0.5rem 0;
+        background: transparent;
+      }
+      #playerModal.cinema #playerHead .headbtns {
+        flex-direction: column;
+      }
+      #playerModal.cinema #playerTitle,
+      #playerModal.cinema #playerActions .lbl {
+        display: none;
+      }
+      #playerModal.cinema #playerActions button,
+      #playerModal.cinema #playerYt,
+      #playerModal.cinema #playerHead button {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        margin: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+      }
+      #playerModal.cinema #playerYt {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel2);
+        text-decoration: none;
+      }
+      #playerModal.cinema #playerActions button[hidden] {
+        display: none;
+      }
+      .rail-only {
+        display: none;
+      }
+      #playerModal.cinema .rail-only {
+        display: inline;
+      }
+      /* The side space the frame leaves is filled with the video's own
+     thumbnail, blurred and darkened (YouTube calls theirs ambient mode): the
+     edges then read as part of the picture rather than as empty black. Behind
+     everything and deaf to the pointer, so a click out there still lands on
+     the backdrop and closes the player. */
+      #ambient {
+        display: none;
+      }
+      #playerModal.cinema #ambient {
+        display: block;
+        position: absolute;
+        inset: -80px;
+        z-index: 0;
+        pointer-events: none;
+        background: center / cover no-repeat;
+        filter: blur(50px) brightness(0.4) saturate(1.3);
+      }
+      /* The title moves onto the picture: text only, never a click target, and
+     gone a few seconds in (cinemaTitleTimer). It comes back while a rail is
+     hovered and for the end panel. */
+      #cinemaTitle {
+        display: none;
+      }
+      #playerModal.cinema #cinemaTitle {
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 1;
+        pointer-events: none;
+        padding: 0.8rem 1rem 1.8rem;
+        color: #fff;
+        font-weight: 600;
+        font-size: 1rem;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+        background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        opacity: 0;
+        transition: opacity 0.8s;
+      }
+      #playerModal.cinema #cinemaTitle.show,
+      #playerModal.cinema #playerBox:has(#playerHead:hover, #playerActions:hover) #cinemaTitle {
+        opacity: 1;
+        transition: opacity 0.2s;
       }
       #playerModal.cinema:not(.ending) #playerHead,
       #playerModal.cinema:not(.ending) #playerActions {
@@ -2384,6 +2493,7 @@
       </div>
     </div>
     <div id="playerModal" hidden>
+      <div id="ambient" aria-hidden="true"></div>
       <div id="playerBox" tabindex="-1">
         <div id="playerHead">
           <span id="playerTitle"></span>
@@ -2395,6 +2505,7 @@
         <div id="playerHost">
           <div id="ytplayer"></div>
           <video id="localPlayer" controls playsinline hidden></video>
+          <div id="cinemaTitle" aria-hidden="true"></div>
           <div id="cornerStack">
             <div id="backPill" hidden>
               <span id="bpText"></span>
@@ -2492,37 +2603,39 @@
             hidden
             title="Back to the previous video in this list"
           >
-            &#9664; previous
+            <span class="ico">&#9664;</span> <span class="lbl">previous</span>
           </button>
           <button
             id="playerNext"
             hidden
             title="Skip: not interested. It leaves your unwatched list (in its last seconds it counts as watched instead)"
           >
-            next &#9654;
+            <span class="lbl">next</span> <span class="ico">&#9654;</span>
           </button>
           <button
             id="playerDrop"
             title="Not worth your time: remove it from your library and play the next one (the d key asks first)"
           >
-            &#10005; drop
+            <span class="ico">&#10005;</span> <span class="lbl">drop</span>
           </button>
-          <button id="playerWatched">mark watched</button>
+          <button id="playerWatched" title="Mark watched">
+            <span class="ico rail-only">&#10003;</span><span class="lbl">mark watched</span>
+          </button>
           <button
             id="playerReload"
             title="Rebuild the player from where you are — for when the video stops responding"
           >
-            &#8635; reload player
+            <span class="ico">&#8635;</span> <span class="lbl">reload player</span>
           </button>
           <button
             id="playerCinema"
             aria-pressed="false"
             title="Cinema mode (c): the video fills the window and everything else fades until it ends"
           >
-            &#9680; cinema
+            <span class="ico">&#9680;</span> <span class="lbl">cinema</span>
           </button>
-          <a id="playerYt" target="_blank" rel="noopener"
-            >open on YouTube &#8599;</a
+          <a id="playerYt" target="_blank" rel="noopener" title="Open on YouTube"
+            ><span class="lbl">open on YouTube </span><span class="ico">&#8599;</span></a
           >
         </div>
       </div>
@@ -4177,6 +4290,7 @@
         hideDropAsk({ refocus: false });
         syncQueueButtons();
         $("playerTitle").textContent = v.title;
+        paintCinemaStage(v);
         $("playerYt").href = `https://www.youtube.com/watch?v=${v.id}`;
         $("playerModal").hidden = false;
         if (!wasOpen) grabPage();
@@ -4644,6 +4758,20 @@
         d: askDrop,
         c: toggleCinema,
       };
+
+      // What cinema mode paints around a video: its title over the top of the
+      // frame for a few seconds, and its thumbnail as the blurred backdrop.
+      let cinemaTitleTimer = null;
+      function paintCinemaStage(v) {
+        const title = $("cinemaTitle");
+        title.textContent = v.title;
+        title.classList.add("show");
+        clearTimeout(cinemaTitleTimer);
+        cinemaTitleTimer = setTimeout(() => title.classList.remove("show"), 4000);
+        $("ambient").style.backgroundImage = v.thumbnail_url
+          ? `url("${v.thumbnail_url.replace(/["\\]/g, "\\$&")}")`
+          : "";
+      }
 
       // Cinema mode, kept per machine like the colour theme. The class sits on the
       // modal for as long as the mode is on; .ending is what hands the chrome back

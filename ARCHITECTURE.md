@@ -467,10 +467,23 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   `#playerHost:fullscreen` must clear the 16/9 `aspect-ratio`, or the host keeps
   a 16/9 box on a screen that isn't.
   **Cinema mode** (`c`, `#playerCinema` in the bottom row, `cinema` in
-  localStorage — **on unless switched off**) is the windowed counterpart: the
-  box takes the whole window (the widest 16/9 frame that still leaves the two
-  rows their ~100px, kept through `.ending` so the frame never jumps), the
-  backdrop and the box go black and `#playerHead` /
+  localStorage — **on unless switched off**) is the windowed counterpart. Its
+  layout turns the two rows into **rails beside the frame** — `#playerHead`
+  (close, fullscreen) on the left, `#playerActions` icon-only on the right
+  (`.lbl` hidden, `.rail-only` shown, the full label kept as the tooltip) —
+  so the frame gets the whole window height (`--cine-w`). Rows above and below
+  were the first attempt and cost ~100px of height, which on a 16/9 window is
+  what a 16/9 frame is limited by: on a 1280×641 window that meant 955×537 and
+  160px black bars; the rails give 1140×641. Laying the rows *over* the frame
+  instead would put ours on top of YouTube's own controls, which live at the
+  bottom of the cross-origin frame. The title becomes `#cinemaTitle`, text
+  over the top of the frame with `pointer-events: none` (hit-test the frame,
+  as with `#rateCard`), shown for 4s per video (`paintCinemaStage`) and while a
+  rail is hovered. `#ambient` fills the side space with the video's thumbnail,
+  blurred and darkened, also deaf to the pointer so a click out there still
+  reaches the backdrop and closes. `#playerHost:not(:fullscreen)` guards the
+  width, or the cinema rule would outrank `#playerHost:fullscreen`. The frame
+  keeps its size through `.ending`. The backdrop goes black and `#playerHead` /
   `#playerActions` fade to 12% — still there, still clickable, back at once on
   hover or focus. The rows carry their own `--panel` background and fade as a
   whole, because blacking them out instead leaves a light theme's dark text
