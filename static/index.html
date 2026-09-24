@@ -345,6 +345,21 @@
   .theme-item .tren { cursor: pointer; margin-left: .4rem; }
   .theme-item .tren:hover { color: var(--accent2); }
   .theme-item .tren, .theme-item .pldel { visibility: hidden; }
+  /* Study / leisure: a lens over All videos, the theme list and recommendations.
+     A theme's mode is the letter in front of its name; click it to cycle. */
+  #modePick { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  #modePick button { border: 0; border-radius: 0; background: transparent; padding: .45rem .75rem; }
+  #modePick button + button { border-left: 1px solid var(--border); }
+  #modePick button[aria-checked="true"] { background: var(--accent2); color: #fff; }
+  .theme-item .tname { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+  .tmode { flex: none; width: 1.05rem; height: 1.05rem; border-radius: 4px; font-size: .64rem; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; }
+  .tmode.study { background: var(--accent2); }
+  .tmode.leisure { background: var(--ok); }
+  .tmode.none { border: 1px solid var(--muted); border-radius: 50%; opacity: .35; transform: scale(.7); }
+  .theme-item:hover .tmode.none { opacity: .9; }
+  .tmode:hover { outline: 2px solid var(--text); outline-offset: 1px; }
+  .modehint { color: var(--muted); font-size: .8rem; padding: .4rem .55rem; line-height: 1.4; }
   .theme-item:hover .tren, .theme-item:hover .pldel { visibility: visible; }
   #ctxMenu { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; min-width: 170px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
   #ctxMenu .mi { padding: .45rem .75rem; cursor: pointer; font-size: .85rem; }
@@ -460,6 +475,11 @@
 <body>
 <header>
   <h1><span>&#9654;</span> My Watch Log</h1>
+  <div id="modePick" role="radiogroup" title="Narrows All videos, the theme list and recommendations. Mark a theme with the letter in front of its name.">
+    <button type="button" role="radio" data-mode="">All</button>
+    <button type="button" role="radio" data-mode="study">Study</button>
+    <button type="button" role="radio" data-mode="leisure">Leisure</button>
+  </div>
   <form id="syncForm">
     <input id="syncUrl" placeholder="Paste a YouTube playlist / channel / video URL and press Enter" required>
     <button class="primary" type="submit">Sync</button>
@@ -2513,6 +2533,37 @@ const THEME_SORTS = {
   "count-asc": (a, b) => a.video_count - b.video_count || a.name.localeCompare(b.name),
 };
 
+// Study / leisure lens (THEME_MODES in db.py). Kept per machine, like the colour
+// theme: the PC by the treadmill can simply stay in "leisure". It narrows only
+// what you did not pick — All videos, the theme list, recommendations; a theme,
+// playlist, channel or search you chose is shown whole.
+const MODE_NAMES = { "": "All", study: "Study", leisure: "Leisure" };
+let libMode = "";
+try { libMode = localStorage.getItem("libMode") || ""; } catch {}
+if (!(libMode in MODE_NAMES)) libMode = "";
+
+function paintModePick() {
+  document.querySelectorAll("#modePick button").forEach(b =>
+    b.setAttribute("aria-checked", String(b.dataset.mode === libMode)));
+}
+document.querySelectorAll("#modePick button").forEach(b => b.onclick = () => {
+  if (b.dataset.mode === libMode) return;
+  libMode = b.dataset.mode;
+  try { localStorage.setItem("libMode", libMode); } catch {}
+  paintModePick();
+  // Switching lands on the whole of the new lens: a theme or a search left
+  // over from the other one would make the switch look like it did nothing.
+  activeTheme = null; activePlaylist = null; activeChannel = null;
+  $("searchBox").value = "";
+  if (currentTab !== "Recommend") showTab("Browse");
+  refreshCurrent();
+});
+paintModePick();
+
+function allVideosLabel() {
+  return libMode ? `All ${libMode} videos` : "All videos";
+}
+
 $("themeSort").value = localStorage.getItem("themeSort") || "name";
 $("themeSort").onchange = (e) => {
   localStorage.setItem("themeSort", e.target.value);
@@ -2523,26 +2574,46 @@ async function loadThemes() {
   // Counts follow the "unwatched only" filter: on → each theme shows how many
   // unwatched videos it holds (and "All videos" the unwatched total).
   const unwatched = $("unwatchedOnly").checked;
-  const data = await api("/themes" + (unwatched ? "?watched=false" : ""));
+  const params = new URLSearchParams();
+  if (unwatched) params.set("watched", "false");
+  if (libMode) params.set("mode", libMode);
+  const data = await api("/themes" + (String(params) ? "?" + params : ""));
   themes = data.themes;
+  const inMode = libMode ? themes.filter(t => t.mode === libMode) : themes;
   // Sorted for the sidebar only: the recommend dropdown and the theme datalist
   // stay in the server's A–Z order, which is not this control's business.
-  const ordered = [...themes].sort(THEME_SORTS[$("themeSort").value] || THEME_SORTS.name);
+  const ordered = [...inMode].sort(THEME_SORTS[$("themeSort").value] || THEME_SORTS.name);
   const list = $("themeList");
   list.replaceChildren();
   const all = document.createElement("div");
   all.className = "theme-item" +
     (activeTheme === null && !activePlaylist && !activeChannel ? " active" : "");
-  all.innerHTML = `<span>All videos</span><span class="n">${data.total_videos}</span>`;
+  all.innerHTML = `<span>${allVideosLabel()}</span><span class="n">${data.total_videos}</span>`;
   all.onclick = () => { activeTheme = null; activePlaylist = null; activeChannel = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
   list.appendChild(all);
+  if (libMode && !ordered.length) {
+    const hint = document.createElement("div");
+    hint.className = "modehint";
+    hint.textContent = `No ${libMode} themes yet. Switch to All and click the circle in front of a theme to mark it.`;
+    list.appendChild(hint);
+  }
   ordered.forEach(t => {
     const el = document.createElement("div");
     el.className = "theme-item" + (t.name === activeTheme && !activePlaylist ? " active" : "");
-    el.innerHTML = `<span>${t.name}</span>
+    const mode = t.mode || "";
+    const modeTip = { "": "No mode. Click: Study", study: "Study. Click: Leisure", leisure: "Leisure. Click: no mode" }[mode];
+    el.innerHTML = `<span class="tname"><span class="tmode ${mode || "none"}" title="${modeTip}">${mode ? mode[0].toUpperCase() : ""}</span><span>${t.name}</span></span>
       <span class="n">${t.video_count}<span class="tren" title="Rename theme (renaming onto an existing theme merges them)">&#9998;</span><span class="pldel" title="Delete theme">&times;</span></span>`;
     el.title = themeTimeText(t);
     el.onclick = () => { activeTheme = t.name; activePlaylist = null; activeChannel = null; showTab("Browse"); loadBrowse(); refreshSidebar(); };
+    el.querySelector(".tmode").onclick = async (e) => {
+      e.stopPropagation();
+      const next = { "": "study", study: "leisure", leisure: null }[mode];
+      await api(`/themes/${encodeURIComponent(t.name)}/mode`, {
+        method: "PUT", body: JSON.stringify({ mode: next }) });
+      toast(`${t.name}: ${next ? MODE_NAMES[next] : "no mode"}`, 1600);
+      refreshCurrent();
+    };
     el.querySelector(".tren").onclick = async (e) => {
       e.stopPropagation();
       const name = prompt("Rename theme (existing name = merge):", t.name);
@@ -2566,7 +2637,7 @@ async function loadThemes() {
   const sel = $("recTheme");
   const cur = sel.value;
   sel.innerHTML = `<option value="">any</option>` +
-    themes.map(t => `<option>${t.name}</option>`).join("");
+    inMode.map(t => `<option>${t.name}</option>`).join("");
   sel.value = cur;
   $("themeNames").innerHTML = themes.map(t => `<option value="${t.name}">`).join("");
   paintThemeTitle();
@@ -2731,10 +2802,14 @@ async function loadBrowse() {
     };
   } else if (activeTheme === null) {
     const search = $("searchBox").value.trim();
-    $("browseTitle").textContent = search ? `results for “${search}”` : "All videos";
+    $("browseTitle").textContent = search ? `results for “${search}”` : allVideosLabel();
+    // A search widens to the whole library, and a video with no theme has no
+    // mode, so "no theme only" would come back empty under a lens.
+    const mode = search || $("unthemedOnly").checked ? "" : libMode;
     fetchPage = (offset) => {
       const params = new URLSearchParams({ limit: BROWSE_PAGE, offset, sort: $("sortBy").value });
       if (search) params.set("search", search);
+      if (mode) params.set("mode", mode);
       if (unwatched) params.set("watched", "false");
       if ($("unthemedOnly").checked) params.set("unthemed", "true");
       if (offline) params.set("downloaded", "true");
@@ -2794,6 +2869,7 @@ async function loadRecommendations() {
   const params = new URLSearchParams({ limit: $("recLimit").value || 12 });
   if ($("recTheme").value) params.set("theme", $("recTheme").value);
   if ($("recMinutes").value) params.set("max_duration", $("recMinutes").value * 60);
+  if (libMode) params.set("mode", libMode);
   const data = await api(`/recommendations?${params}`);
   $("recMode").textContent = data.mode === "profile"
     ? "ranked by your taste profile"

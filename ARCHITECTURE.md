@@ -149,6 +149,21 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   = dot product. Everything else runs on plain numpy without the [ml] extra.
 - `app/categorize/themes.py` — prototype-based auto-assign (threshold 0.45),
   review queue, HDBSCAN discovery.
+- `themes.mode` — `study`, `leisure` or NULL: whether a video is for work or
+  for fun is a different question from what it is about (an AI video can be
+  either), and asking it **once per theme** answers it for every video in the
+  theme, where a per-video flag would be 2,700 decisions. A video is in a mode
+  when *any* of its themes is — one themed both AI and Gaming is fair game for
+  either session — and a video with no moded theme is only in "all". The
+  header's All / Study / Leisure switch (`libMode`, localStorage — the PC by
+  the treadmill can just stay in one) is a lens over what you did **not**
+  pick: All videos, the sidebar's theme list, its count, and recommendations.
+  A theme, playlist, channel or search you chose is shown whole, like search
+  already widens past a theme; "no theme only" drops the lens too, since an
+  unthemed video has no mode. Queues come from the grid, so a lens makes a
+  mode-pure queue with no queue code of its own. A merge keeps the target's
+  mode and takes the merged theme's only if the target had none. Added by
+  `_migrate_theme_modes`, guarded on `PRAGMA table_info`.
 - `app/recommend/engine.py` — profile vector from watch_state (thumbs up +1.0,
   down −0.6, skipped −0.3, watched-but-unvoted +0.2, 180-day half-life),
   cosine + recency, MMR with a redundancy⁴ penalty targeting near-duplicates.

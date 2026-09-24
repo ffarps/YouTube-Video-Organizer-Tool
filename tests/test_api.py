@@ -664,3 +664,52 @@ def test_playlist_edit_guards(client):
 def test_rule_validation(client):
     assert client.post("/rules", json={"pattern": "  ", "theme": "X"}).status_code == 422
     assert client.post("/rules", json={"pattern": "x", "theme": ""}).status_code == 422
+
+
+def _ids(response):
+    return {v["id"] for v in response.json()["videos"]}
+
+
+def test_theme_mode_scopes_library_counts_and_recommendations(client):
+    client.post("/videos", json={"url": "guitar000ok"})  # rules: Guitar
+    client.post("/videos", json={"url": "aivideo00ok"})  # rules: AI
+    assert client.put("/themes/AI/mode", json={"mode": "study"}).status_code == 200
+    client.put("/themes/Guitar/mode", json={"mode": "leisure"})
+
+    modes = {t["name"]: t["mode"] for t in client.get("/themes").json()["themes"]}
+    assert modes["AI"] == "study" and modes["Guitar"] == "leisure"
+
+    assert _ids(client.get("/videos?mode=study")) == {"aivideo00ok"}
+    assert _ids(client.get("/videos?mode=leisure")) == {"guitar000ok"}
+    assert _ids(client.get("/videos")) == {"aivideo00ok", "guitar000ok"}
+    assert client.get("/themes?mode=study").json()["total_videos"] == 1
+
+    recs = client.get("/recommendations?mode=leisure").json()["recommendations"]
+    assert [v["id"] for v in recs] == ["guitar000ok"]
+
+
+def test_video_with_a_theme_in_each_mode_is_in_both(client):
+    client.post("/videos", json={"url": "aivideo00ok"})
+    client.post("/videos/aivideo00ok/themes", json={"name": "Guitar"})
+    client.put("/themes/AI/mode", json={"mode": "study"})
+    client.put("/themes/Guitar/mode", json={"mode": "leisure"})
+    assert _ids(client.get("/videos?mode=study")) == {"aivideo00ok"}
+    assert _ids(client.get("/videos?mode=leisure")) == {"aivideo00ok"}
+
+
+def test_theme_mode_can_be_cleared_and_is_validated(client):
+    client.post("/videos", json={"url": "aivideo00ok"})
+    client.put("/themes/AI/mode", json={"mode": "study"})
+    client.put("/themes/AI/mode", json={"mode": None})
+    assert _ids(client.get("/videos?mode=study")) == set()
+    assert client.put("/themes/AI/mode", json={"mode": "work"}).status_code == 422
+    assert client.get("/videos?mode=work").status_code == 422
+    assert client.put("/themes/Nope/mode", json={"mode": "study"}).status_code == 404
+
+
+def test_merged_theme_keeps_a_mode(client):
+    client.post("/videos", json={"url": "aivideo00ok"})
+    client.put("/themes/AI/mode", json={"mode": "study"})
+    client.post("/themes", json={"name": "Learning"})
+    client.patch("/themes/AI", json={"name": "Learning"})  # merge into a mode-less theme
+    assert _ids(client.get("/videos?mode=study")) == {"aivideo00ok"}

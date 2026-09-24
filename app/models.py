@@ -80,6 +80,10 @@ class ThemeAssignRequest(BaseModel):
     name: NonEmptyStr  # stripped — "mental health " and "mental health" are one theme
 
 
+class ThemeModeUpdate(BaseModel):
+    mode: Optional[Literal["study", "leisure"]] = None  # None: in neither
+
+
 class ThemeCreateRequest(BaseModel):
     name: NonEmptyStr
     video_ids: List[str] = []

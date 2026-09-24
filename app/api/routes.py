@@ -3,7 +3,7 @@ import logging
 import queue
 import sqlite3
 import threading
-from typing import Iterator, Optional
+from typing import Iterator, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -32,9 +32,12 @@ from app.models import (
     SyncRequest,
     ThemeAssignRequest,
     ThemeCreateRequest,
+    ThemeModeUpdate,
     WatchStateUpdate,
 )
 from app.recommend import engine
+
+ThemeMode = Literal["study", "leisure"]
 
 router = APIRouter()
 
@@ -194,6 +197,7 @@ def list_videos(
     downloaded: Optional[bool] = None,
     channel: Optional[str] = None,
     channel_id: Optional[str] = None,
+    mode: Optional[ThemeMode] = None,
     limit: int = 200,
     offset: int = 0,
     conn: sqlite3.Connection = Depends(get_db),
@@ -201,10 +205,12 @@ def list_videos(
     """Browse/search the whole library, across themes.
 
     `channel`/`channel_id` narrow to one uploader — what the library already
-    holds, not what the channel has on YouTube."""
+    holds, not what the channel has on YouTube. `mode` keeps videos with at
+    least one theme in that mode."""
     videos = db.list_videos(
         conn, search, sort, watched, unthemed, downloaded,
         channel=channel, channel_id=channel_id, limit=limit, offset=offset,
+        mode=mode,
     )
     theme_map = db.themes_for_videos(conn, [v["id"] for v in videos])
     for video in videos:
@@ -214,14 +220,31 @@ def list_videos(
 
 @router.get("/themes")
 def list_themes(
-    watched: Optional[bool] = None, conn: sqlite3.Connection = Depends(get_db)
+    watched: Optional[bool] = None,
+    mode: Optional[ThemeMode] = None,
+    conn: sqlite3.Connection = Depends(get_db),
 ):
     """List themes with counts. Pass ``watched=false`` to count only each
-    theme's unwatched videos, matching the Browse "unwatched only" filter."""
+    theme's unwatched videos, matching the Browse "unwatched only" filter.
+    ``mode`` scopes only ``total_videos``; every theme is listed either way,
+    each with its own mode."""
     return {
         "themes": db.list_themes(conn, watched),
-        "total_videos": db.count_videos(conn, watched),
+        "total_videos": db.count_videos(conn, watched, mode),
     }
+
+
+@router.put("/themes/{theme_name}/mode")
+def set_theme_mode(
+    theme_name: str,
+    body: ThemeModeUpdate,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """Mark a theme study, leisure, or neither (``mode: null``)."""
+    if not db.set_theme_mode(conn, theme_name, body.mode):
+        raise HTTPException(status_code=404, detail="Theme not found")
+    conn.commit()
+    return {"name": theme_name, "mode": body.mode}
 
 
 @router.patch("/themes/{theme_name}")
@@ -499,9 +522,10 @@ def recommendations(
     theme: Optional[str] = None,
     max_duration: Optional[int] = None,  # seconds
     limit: int = 20,
+    mode: Optional[ThemeMode] = None,
     conn: sqlite3.Connection = Depends(get_db),
 ):
-    return engine.recommend(conn, theme, max_duration, limit)
+    return engine.recommend(conn, theme, max_duration, limit, mode)
 
 
 @router.patch("/videos/{video_id}/watch-state")

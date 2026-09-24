@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS videos (
 CREATE TABLE IF NOT EXISTS themes (
     id   INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    kind TEXT NOT NULL DEFAULT 'manual'   -- manual | discovered
+    kind TEXT NOT NULL DEFAULT 'manual',  -- manual | discovered
+    -- study | leisure | NULL. Whether a video is for work or for fun is a
+    -- different question from what it is about, and asking it once per theme
+    -- answers it for every video in the theme (see THEME_MODES).
+    mode TEXT
 );
 
 CREATE TABLE IF NOT EXISTS video_themes (
@@ -136,6 +140,17 @@ CREATE INDEX IF NOT EXISTS idx_videos_published ON videos(published_at);
 """
 
 
+# A video is in a mode when any of its themes is: a video themed both "AI" and
+# "Gaming" is fair game for either session, and dropping it from both would
+# hide it for no reason. A video with no moded theme is only in "all".
+THEME_MODES = ("study", "leisure")
+
+_MODE_CLAUSE = """EXISTS (
+    SELECT 1 FROM video_themes vt JOIN themes t ON t.id = vt.theme_id
+    WHERE vt.video_id = v.id AND t.mode = ?
+)"""
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -238,11 +253,23 @@ def _migrate_resume_positions(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE watch_state ADD COLUMN resume_at TEXT")
 
 
+def _migrate_theme_modes(conn: sqlite3.Connection) -> None:
+    """Add the study/leisure mode to a themes table that predates it.
+
+    Guarded on the column list for the same reason as `_migrate_play_counters`
+    — see there.
+    """
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(themes)")}
+    if "mode" not in columns:
+        conn.execute("ALTER TABLE themes ADD COLUMN mode TEXT")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     _migrate_ratings_to_thumbs(conn)
     _migrate_play_counters(conn)
     _migrate_resume_positions(conn)
+    _migrate_theme_modes(conn)
     conn.commit()
 
 
@@ -399,7 +426,7 @@ def list_themes(
         dict(r)
         for r in conn.execute(
             f"""
-            SELECT t.id, t.name, t.kind, {count_expr} AS video_count,
+            SELECT t.id, t.name, t.kind, t.mode, {count_expr} AS video_count,
                    COUNT(vt.video_id) AS total_count,
                    SUM(CASE WHEN w.status = 'watched' THEN 1 ELSE 0 END) AS watched_count,
                    COALESCE(SUM(v.duration_sec), 0) AS total_sec,
@@ -417,6 +444,13 @@ def list_themes(
             """
         )
     ]
+
+
+def set_theme_mode(
+    conn: sqlite3.Connection, name: str, mode: Optional[str]
+) -> bool:
+    cur = conn.execute("UPDATE themes SET mode = ? WHERE name = ?", (mode, name))
+    return cur.rowcount > 0
 
 
 def delete_theme(conn: sqlite3.Connection, name: str) -> bool:
@@ -465,6 +499,12 @@ def rename_theme(
           AND video_id NOT IN (SELECT video_id FROM video_themes WHERE theme_id = ?)
         """,
         (target["id"], old["id"], target["id"]),
+    )
+    # the target's own mode wins; one it never had is taken from the merged
+    conn.execute(
+        "UPDATE themes SET mode = COALESCE(mode, (SELECT mode FROM themes WHERE id = ?))"
+        " WHERE id = ?",
+        (old["id"], target["id"]),
     )
     conn.execute("DELETE FROM themes WHERE id = ?", (old["id"],))
     return "merged"
@@ -754,6 +794,7 @@ def list_videos(
     channel_id: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
+    mode: Optional[str] = None,
 ) -> List[dict]:
     query = """
         SELECT v.*, w.status AS watch_status, w.rating,
@@ -803,6 +844,9 @@ def list_videos(
         params.append(channel)
     if channel_match:
         clauses.append("(" + " OR ".join(channel_match) + ")")
+    if mode:
+        clauses.append(_MODE_CLAUSE)
+        params.append(mode)
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY "
@@ -819,13 +863,24 @@ def list_videos(
     return [_row_to_video(r) for r in conn.execute(query, params)]
 
 
-def count_videos(conn: sqlite3.Connection, watched: Optional[bool] = None) -> int:
+def count_videos(
+    conn: sqlite3.Connection,
+    watched: Optional[bool] = None,
+    mode: Optional[str] = None,
+) -> int:
     query = "SELECT COUNT(*) AS n FROM videos v LEFT JOIN watch_state w ON w.video_id = v.id"
+    clauses: list = []
+    params: list = []
     if watched is True:
-        query += " WHERE w.status = 'watched'"
+        clauses.append("w.status = 'watched'")
     elif watched is False:
-        query += " WHERE COALESCE(w.status, 'unwatched') != 'watched'"
-    return conn.execute(query).fetchone()["n"]
+        clauses.append("COALESCE(w.status, 'unwatched') != 'watched'")
+    if mode:
+        clauses.append(_MODE_CLAUSE)
+        params.append(mode)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    return conn.execute(query, params).fetchone()["n"]
 
 
 # --- embeddings -------------------------------------------------------------
@@ -917,6 +972,7 @@ def unwatched_candidates(
     conn: sqlite3.Connection,
     theme: Optional[str] = None,
     max_duration_sec: Optional[int] = None,
+    mode: Optional[str] = None,
 ) -> List[dict]:
     query = """
         SELECT v.*, w.status AS watch_status, w.rating, w.resume_seconds,
@@ -937,6 +993,9 @@ def unwatched_candidates(
     if max_duration_sec:
         query += " AND v.duration_sec IS NOT NULL AND v.duration_sec <= ?"
         params.append(max_duration_sec)
+    if mode:
+        query += " AND " + _MODE_CLAUSE
+        params.append(mode)
     rows = conn.execute(query, params).fetchall()
     videos = []
     for row in rows:

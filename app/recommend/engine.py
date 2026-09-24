@@ -111,8 +111,9 @@ def recommend(
     theme: Optional[str] = None,
     max_duration_sec: Optional[int] = None,
     limit: int = 20,
+    mode: Optional[str] = None,
 ) -> dict:
-    candidates = db.unwatched_candidates(conn, theme, max_duration_sec)
+    candidates = db.unwatched_candidates(conn, theme, max_duration_sec, mode)
     profile = profile_vector(conn)
 
     scored = []
