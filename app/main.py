@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Watchlog", version="2.1", lifespan=lifespan)
+    app = FastAPI(title="Peneira", version="2.1", lifespan=lifespan)
     app.include_router(router)
 
     # Which request died matters as much as the traceback: without the path

@@ -1,6 +1,6 @@
-# Watchlog
+# Peneira
 
-Watchlog keeps a YouTube backlog in a SQLite file on your own machine. It pulls
+Peneira keeps a YouTube backlog in a SQLite file on your own machine. It pulls
 in playlists, channels and single videos, sorts them into themes, tracks what
 you have watched and how you rated it, suggests what to watch next out of your
 own library, and can save individual videos to disk for offline viewing.
@@ -9,8 +9,9 @@ On Windows it opens as a desktop window. On any OS it runs as a local web app
 at `http://localhost:8000`. There is no account and no server other than the
 one on your machine; the only thing it talks to is YouTube.
 
-The repository is still named YouTube-Video-Organizer-Tool. The app calls
-itself Watchlog, and the window title is "My Watch Log".
+The repository is still named YouTube-Video-Organizer-Tool. The app is
+called Peneira (Portuguese for "sieve"); it used to be Watchlog, which is why
+`Watchlog.vbs` keeps that name.
 
 ## What it does not do
 
@@ -40,7 +41,7 @@ Double-click `start.bat`. The first run installs dependencies; after that the
 app opens in its own window, with no browser tab and no console. Closing the
 window stops the server.
 
-Run `create-desktop-shortcut.bat` once to put a "My Watch Log" icon on your
+Run `create-desktop-shortcut.bat` once to put a "Peneira" icon on your
 Desktop and use that from then on. It launches `Watchlog.vbs`, which starts the
 app without showing a console at all.
 
@@ -248,7 +249,7 @@ streams that have to be merged, and ffmpeg is what merges them. On Windows:
 winget install Gyan.FFmpeg
 ```
 
-Restart Watchlog afterwards. The Offline tab shows which state you are in and
+Restart Peneira afterwards. The Offline tab shows which state you are in and
 labels any quality it cannot currently deliver. Audio-only downloads never need
 ffmpeg.
 

@@ -39,7 +39,7 @@ exit /b 0
 rem "start.bat browser" - the development path: server in this console, app in
 rem your web browser, reloading itself whenever a file under app\ changes.
 echo.
-echo   My Watch Log - http://localhost:8000
+echo   Peneira - http://localhost:8000
 echo   Close this window (or press Ctrl+C) to stop.
 echo.
 start "" cmd /c "timeout /t 2 >nul & start "" http://localhost:8000"

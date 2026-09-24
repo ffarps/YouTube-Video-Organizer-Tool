@@ -1,6 +1,6 @@
 # Architecture
 
-Watchlog is a local FastAPI app that syncs YouTube playlists into SQLite,
+Peneira (formerly Watchlog) is a local FastAPI app that syncs YouTube playlists into SQLite,
 themes the videos, recommends what to watch and can save copies to disk. This
 file is the map of the code: what each module owns, and the decisions behind
 the parts that are not obvious from reading them. See readme.md for what the

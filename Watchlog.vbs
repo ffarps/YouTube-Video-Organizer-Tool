@@ -1,4 +1,5 @@
-' My Watch Log - silent launcher.
+' Peneira - silent launcher. (The file keeps the app's old name: Desktop
+' shortcuts point at it by path.)
 '
 ' Double-click this (or the Desktop shortcut) to open the app in its own
 ' window. Nothing else appears: no console, not even a flash of one. start.bat
@@ -35,7 +36,7 @@ If rc <> 0 Then
     If rc <> 0 Then
         MsgBox "Could not install the dependencies." & vbCrLf & vbCrLf & _
                "Run start.bat directly to see what went wrong.", _
-               16, "My Watch Log"
+               16, "Peneira"
         WScript.Quit 1
     End If
 End If

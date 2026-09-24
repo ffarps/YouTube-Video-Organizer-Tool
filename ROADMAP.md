@@ -1,6 +1,6 @@
 # Roadmap
 
-Watchlog — local YouTube backlog organizer: playlist sync, theming,
+Peneira — local YouTube backlog organizer: playlist sync, theming,
 content-based recommendations, offline copies. One SQLite file, no cloud
 dependency beyond YouTube.
 

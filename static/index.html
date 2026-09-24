@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>My Watch Log</title>
+    <title>Peneira</title>
     <link rel="icon" href="/static/favicon.ico" />
     <script>
       document.documentElement.dataset.theme =
@@ -2067,7 +2067,7 @@
   </head>
   <body>
     <header>
-      <h1><span>&#9654;</span> My Watch Log</h1>
+      <h1><span>&#9654;</span> Peneira</h1>
       <div
         id="modePick"
         role="radiogroup"
@@ -2158,7 +2158,7 @@
                 <option value="longest">longest</option>
                 <option value="shortest">shortest</option>
                 <option value="channel">channel</option>
-                <option value="added">recently added</option>
+                <option value="added" selected>recently added</option>
                 <option value="played">most watched</option>
                 <option value="replayed">recently watched</option>
               </select></label
@@ -5511,7 +5511,7 @@
           warn.innerHTML = `<b>ffmpeg isn't installed</b>, so video downloads are capped at
       ${dlCaps.max}p. YouTube serves anything taller as separate video and audio
       streams, and ffmpeg is what merges them back together. Install it with
-      <code>winget install Gyan.FFmpeg</code> and restart Watchlog to unlock up to
+      <code>winget install Gyan.FFmpeg</code> and restart Peneira to unlock up to
       ${Math.max(...dlCaps.choices)}p. Audio-only downloads work either way.`;
         } else {
           warn.hidden = true;

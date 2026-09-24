@@ -33,7 +33,7 @@ from app.config import get_settings
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PORT = 8000
-TITLE = "My Watch Log"
+TITLE = "Peneira"
 
 log = logging.getLogger("watchlog.desktop")
 # Matches --bg of the app's default (dark) theme, so opening the window doesn't
@@ -72,6 +72,9 @@ def _data_dir(name: str) -> Path:
         base = Path.home() / "Library/Application Support"
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    # Still "Watchlog", the app's name before Peneira: the WebView profile lives
+    # here, and its localStorage holds the colour theme, the study/leisure lens
+    # and cinema mode. A new folder would quietly reset all of them.
     path = base / "Watchlog" / name
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -149,7 +152,7 @@ def _wait_until_serving(server, thread: threading.Thread, timeout: float = 60.0)
         if not thread.is_alive():
             raise RuntimeError(
                 "The server thread stopped during startup. "
-                "Is another copy of Watchlog already using the port?"
+                "Is another copy of Peneira already using the port?"
             )
         time.sleep(0.05)
     raise RuntimeError(f"The server did not start within {timeout:.0f}s")
@@ -199,7 +202,10 @@ def _main_window_handle() -> Optional[int]:
 
 
 def _set_app_id(app_id: str = "Watchlog.Desktop") -> None:
-    """Tell Windows this process is Watchlog, not Python.
+    """Tell Windows this process is Peneira, not Python.
+
+    The id keeps the app's old name on purpose: a pinned taskbar button is
+    matched by it, and a new id would leave that pin launching nothing.
 
     Without an explicit AppUserModelID the taskbar identifies the app by the
     executable that started it, so the button inherits pythonw.exe's identity:
@@ -638,7 +644,7 @@ def run(port: Optional[int] = None) -> int:
         _wait_until_serving(server, thread)
     except Exception as exc:
         log.exception("server did not come up")
-        _error_box(f"Watchlog could not start.\n\n{exc}\n\nLog: {log_path}")
+        _error_box(f"Peneira could not start.\n\n{exc}\n\nLog: {log_path}")
         return 1
 
     try:
@@ -647,7 +653,7 @@ def run(port: Optional[int] = None) -> int:
         log.info("opening window: trying pywebview")
         if not (_open_window(url) or _open_browser_window(url, port)):
             _error_box(
-                "Watchlog is running but there is no window to show it in.\n\n"
+                "Peneira is running but there is no window to show it in.\n\n"
                 'Install the desktop dependency:  pip install -e ".[desktop]"\n'
                 f"or open {url} in your browser (start.bat browser).\n\n"
                 f"Log: {log_path}"
@@ -655,7 +661,7 @@ def run(port: Optional[int] = None) -> int:
             return 1
     except Exception as exc:  # the window itself failed, not the app
         log.exception("window backend crashed")
-        _error_box(f"The Watchlog window closed unexpectedly.\n\n{exc}\n\nLog: {log_path}")
+        _error_box(f"The Peneira window closed unexpectedly.\n\n{exc}\n\nLog: {log_path}")
         return 1
     finally:
         # Window closed (or never opened): take the server down with it.
