@@ -383,6 +383,37 @@ def test_assign_and_remove_video_theme(client):
     assert client.delete("/videos/guitar000ok/themes/Favorites").status_code == 404
 
 
+def test_removed_rule_theme_stays_removed_after_reapply(client):
+    client.post("/videos", json={"url": "aivideo00ok"})  # rules theme it AI
+    assert "AI" in client.get("/videos/aivideo00ok").json()["themes"]
+
+    client.delete("/videos/aivideo00ok/themes/AI")
+    client.post("/rules/apply")
+    # the bug: reapply put every removed rule theme straight back
+    assert "AI" not in client.get("/videos/aivideo00ok").json()["themes"]
+
+
+def test_assigning_a_removed_theme_by_hand_clears_the_rejection(client):
+    client.post("/videos", json={"url": "aivideo00ok"})
+    client.delete("/videos/aivideo00ok/themes/AI")
+    client.post("/videos/aivideo00ok/themes", json={"name": "AI"})
+    client.delete("/videos/aivideo00ok/themes/AI")  # rejected again...
+    client.post("/videos/themes/bulk", json={"video_ids": ["aivideo00ok"], "name": "AI"})
+    client.post("/rules/apply")
+    # ...and brought back by the bulk path, which must clear it as well
+    assert "AI" in client.get("/videos/aivideo00ok").json()["themes"]
+
+
+def test_rejection_follows_a_merged_theme(client):
+    client.post("/videos", json={"url": "aivideo00ok"})
+    client.delete("/videos/aivideo00ok/themes/AI")
+    client.patch("/themes/AI", json={"name": "Machine Learning"})  # rename
+    client.post("/themes", json={"name": "ML"})
+    client.patch("/themes/Machine Learning", json={"name": "ML"})  # merge
+    client.post("/rules/apply")
+    assert client.get("/videos/aivideo00ok").json()["themes"] == []
+
+
 def test_bulk_assign_theme(client):
     client.post("/videos", json={"url": "guitar000ok"})
     client.post("/videos", json={"url": "aivideo00ok"})

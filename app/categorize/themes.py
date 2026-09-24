@@ -73,10 +73,13 @@ def auto_assign(
     prototypes = theme_prototypes(conn)
     if not prototypes:
         return {"assigned": 0, "needs_review": 0, "detail": "no theme prototypes yet"}
+    rejected = db.rejected_themes(conn)
     assigned = 0
     needs_review = 0
     for video in db.videos_without_themes(conn, with_embedding_only=True, limit=limit):
         suggestions = suggest_for_video(video, prototypes, top_k=1)
+        if suggestions and suggestions[0]["theme"] in rejected.get(video["id"], ()):
+            suggestions = []  # removed from this video by hand once already
         if suggestions and suggestions[0]["score"] >= threshold:
             theme_id = db.get_or_create_theme(conn, suggestions[0]["theme"])
             db.assign_theme(

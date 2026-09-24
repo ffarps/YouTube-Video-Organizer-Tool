@@ -134,8 +134,12 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   broken. `rules.reapply` reconciles: prunes rule-sourced assignments the
   current rules no longer justify, never touches manual/embedding ones, and
   adds nothing to a video with a manual theme (only an exclusive rule
-  overrides one). It still has no memory of a rule theme removed by hand, so
-  the next reapply puts it back. User-defined rules (`theme_rules` table,
+  overrides one). A theme removed from a video by hand is written to
+  `theme_rejections`, and neither reapply nor embedding auto-assign puts it
+  back — without that, every cleanup was undone by the next reapply.
+  Nothing is promoted in its place; assigning the theme by hand (single or
+  bulk) clears the row, and a merge carries it to the merged theme.
+  User-defined rules (`theme_rules` table,
   managed from the UI Rules tab via `/rules`) add expression → theme
   mappings on top; an *exclusive* rule gives matching videos ONLY that
   theme. `rules.reapply` (POST `/rules/apply`) re-runs everything over

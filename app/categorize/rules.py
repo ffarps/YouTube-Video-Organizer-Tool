@@ -206,12 +206,19 @@ def reapply(conn: sqlite3.Connection) -> dict:
     videos = db.all_videos(conn)
     existing = db.themes_for_videos(conn, [v["id"] for v in videos])
     hand_themed = db.manually_themed_video_ids(conn)
+    rejected = db.rejected_themes(conn)
     added = 0
     removed = 0
     for video in videos:
         assignments, exclusive = evaluate(video, custom_rules, overrides)
         if video["id"] in hand_themed and not exclusive:
             assignments = []
+        # a theme removed by hand stays removed; nothing is promoted in its
+        # place, so a video whose only guess was wrong lands under "no theme"
+        taken_off = rejected.get(video["id"], set())
+        assignments = [(n, c) for n, c in assignments if n not in taken_off]
+        if exclusive and not assignments:
+            exclusive = False
         fresh = [name for name, _ in assignments]
         if exclusive:
             removed += db.remove_other_themes(conn, video["id"], fresh)

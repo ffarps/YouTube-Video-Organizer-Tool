@@ -45,6 +45,16 @@ CREATE TABLE IF NOT EXISTS theme_rules (
     created_at TEXT NOT NULL
 );
 
+-- A theme taken off a video by hand. Without it the next reapply puts a
+-- removed rule theme straight back, so cleaning up tags never stuck. Rules
+-- and embedding auto-assign skip these pairs; assigning the theme to the
+-- video by hand deletes the row.
+CREATE TABLE IF NOT EXISTS theme_rejections (
+    video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    theme_id INTEGER NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+    PRIMARY KEY (video_id, theme_id)
+);
+
 -- Remembers that a built-in keyword theme (rules.THEME_KEYWORDS key) was
 -- renamed/merged, so the rule engine feeds its videos into the current name
 -- instead of recreating the original name on the next ingest/reapply.
@@ -445,6 +455,17 @@ def rename_theme(
         """,
         (target["id"], old["id"]),
     )
+    # a rejection of the old name is a rejection of what it merged into —
+    # unless the video already carries the target, which is its answer
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO theme_rejections (video_id, theme_id)
+        SELECT video_id, ? FROM theme_rejections
+        WHERE theme_id = ?
+          AND video_id NOT IN (SELECT video_id FROM video_themes WHERE theme_id = ?)
+        """,
+        (target["id"], old["id"], target["id"]),
+    )
     conn.execute("DELETE FROM themes WHERE id = ?", (old["id"],))
     return "merged"
 
@@ -498,6 +519,11 @@ def assign_theme(
         """,
         (video_id, theme_id, confidence, source),
     )
+    if source == "manual":
+        conn.execute(
+            "DELETE FROM theme_rejections WHERE video_id = ? AND theme_id = ?",
+            (video_id, theme_id),
+        )
 
 
 def videos_by_theme(
@@ -544,6 +570,8 @@ def videos_by_theme(
 def remove_theme_assignment(
     conn: sqlite3.Connection, video_id: str, theme_name: str
 ) -> bool:
+    """Take a theme off a video and remember it was taken off, so no rule or
+    auto-assign puts it back (see theme_rejections)."""
     cur = conn.execute(
         """
         DELETE FROM video_themes
@@ -551,7 +579,29 @@ def remove_theme_assignment(
         """,
         (video_id, theme_name),
     )
-    return cur.rowcount > 0
+    if cur.rowcount == 0:
+        return False
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO theme_rejections (video_id, theme_id)
+        SELECT ?, id FROM themes WHERE name = ?
+        """,
+        (video_id, theme_name),
+    )
+    return True
+
+
+def rejected_themes(conn: sqlite3.Connection) -> Dict[str, Set[str]]:
+    """video_id -> names of the themes removed from it by hand."""
+    mapping: Dict[str, Set[str]] = {}
+    for r in conn.execute(
+        """
+        SELECT tr.video_id, t.name FROM theme_rejections tr
+        JOIN themes t ON t.id = tr.theme_id
+        """
+    ):
+        mapping.setdefault(r["video_id"], set()).add(r["name"])
+    return mapping
 
 
 def remove_other_themes(
