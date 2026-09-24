@@ -1,5 +1,14 @@
 # Peneira
 
+**PT:** A Peneira organiza os vídeos que guardaste no YouTube. Separa o que é
+estudo do que é lazer, deixa-te largar o que não vale a pena e mostra-te o que
+ainda tens por ver. Tudo no teu computador, sem conta nem nuvem.
+
+**EN:** Peneira (Portuguese for "sieve") sorts the videos you saved on YouTube.
+It splits study from leisure, lets you drop what isn't worth your time, and
+shows you what's still left to watch. All on your own machine, no account, no
+cloud.
+
 Peneira keeps a YouTube backlog in a SQLite file on your own machine. It pulls
 in playlists, channels and single videos, sorts them into themes, tracks what
 you have watched and how you rated it, suggests what to watch next out of your
