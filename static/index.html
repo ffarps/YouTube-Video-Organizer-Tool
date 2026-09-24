@@ -223,6 +223,20 @@
     border: 1px solid rgba(255,120,110,.5); box-shadow: 0 8px 28px rgba(0,0,0,.6);
     backdrop-filter: blur(6px); }
   #stuckPill[hidden] { display: none; }
+  /* "Drop this video?" — asked by the d key only; the drop button acts at once.
+     Inside #playerHost so it is on screen in fullscreen too. Hidden with the
+     attribute, never opacity: it covers the frame, and a see-through panel
+     over the video eats every click meant for it (see #rateCard). */
+  #dropAsk { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.55); }
+  #dropAsk[hidden] { display: none; }
+  #dropAskInner { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.2rem;
+    text-align: center; max-width: min(440px, 90%); box-shadow: 0 10px 40px rgba(0,0,0,.55); }
+  #dropAskInner .da-title { font-size: 1rem; font-weight: 600; }
+  #dropAskInner .da-video { color: var(--muted); font-size: .85rem; margin: .3rem 0 .85rem; overflow-wrap: anywhere; }
+  #dropAskInner .da-keys { color: var(--muted); font-size: .72rem; margin-top: .6rem; }
+  #dropYes { background: var(--accent); border-color: var(--accent); color: #fff; margin-right: .4rem; }
+  #playerDrop:hover { border-color: var(--accent); color: var(--accent); }
   #stuckText { font-size: .82rem; color: #ffdad5; }
   #stuckPill button, #stuckPill a { flex: none; font-size: .78rem; padding: .3rem .6rem;
     border-radius: 999px; background: rgba(255,255,255,.14); border: 1px solid transparent;
@@ -710,6 +724,14 @@
           <button id="npNow" hidden>Play now &#9654;</button>
         </div>
       </div>
+      <div id="dropAsk" hidden role="alertdialog" aria-labelledby="dropAskHead">
+        <div id="dropAskInner">
+          <div class="da-title" id="dropAskHead">Drop this video?</div>
+          <div class="da-video" id="dropAskVideo"></div>
+          <button id="dropYes">Drop it</button><button id="dropNo">Keep watching</button>
+          <div class="da-keys">d or Enter drops &middot; Esc or n keeps it</div>
+        </div>
+      </div>
       <div id="rateCard">
         <div id="rateInner">
           <div class="rc-title" id="rateTitle">How was it?</div>
@@ -737,7 +759,8 @@
     </div>
     <div id="playerActions">
       <button id="playerPrev" hidden title="Back to the previous video in this list">&#9664; previous</button>
-      <button id="playerNext" hidden title="Skip to the next video in this list">next &#9654;</button>
+      <button id="playerNext" hidden title="Skip: not interested. It leaves your unwatched list (in its last seconds it counts as watched instead)">next &#9654;</button>
+      <button id="playerDrop" title="Not worth your time: remove it from your library and play the next one (the d key asks first)">&#10005; drop</button>
       <button id="playerWatched">mark watched</button>
       <button id="playerReload" title="Rebuild the player from where you are — for when the video stops responding">&#8635; reload player</button>
       <a id="playerYt" target="_blank" rel="noopener">open on YouTube &#8599;</a>
@@ -862,6 +885,7 @@ function card(v, extras = {}) {
     togglePick(v.id, el);
   }, true);
   const watched = v.watch_status === "watched";
+  const skipped = v.watch_status === "skipped";
   const vote = v.rating || 0;
   const votes =
     `<span data-vote="-1" class="${vote < 0 ? "on" : ""}" title="Not for me">&#128078;</span>` +
@@ -895,14 +919,14 @@ function card(v, extras = {}) {
       <div class="actions">
         <div class="vote">${votes}</div>
         <div class="btns">
-          <button class="watchbtn">${watched ? "unwatch" : "mark watched"}</button>
+          <button class="watchbtn"${skipped ? ' title="You skipped this in the player. Put it back in your unwatched list"' : ""}>${watched ? "unwatch" : skipped ? "unskip" : "mark watched"}</button>
           <button class="carddel" title="Remove video from library">delete</button>
         </div>
       </div>
     </div>`;
 
   el.querySelector(".watchbtn").onclick = async () => {
-    const status = watched ? "unwatched" : "watched";
+    const status = watched || skipped ? "unwatched" : "watched";
     await api(`/videos/${v.id}/watch-state`, { method: "PATCH",
       body: JSON.stringify({ status }) });
     v.watch_status = status;
@@ -1514,6 +1538,23 @@ function loadYtApi() {
   return ytApiPromise;
 }
 
+async function markSkipped(video) {
+  const before = video.watch_status;
+  video.watch_status = "skipped";
+  video.resume_seconds = null;  // the server drops it too (set_watch_state)
+  repaintResumeBar(video.id);
+  try {
+    await api(`/videos/${video.id}/watch-state`, { method: "PATCH",
+      body: JSON.stringify({ status: "skipped" }) });
+  } catch (e) {
+    video.watch_status = before;
+    toast(`Could not mark skipped: ${e.message}`, 6000);
+    return;
+  }
+  toast(`Skipped: ${video.title}. "unskip" on its card brings it back`);
+  refreshCurrent();
+}
+
 async function markWatched(video) {
   // Set locally first, the way saveVote does: the end panel and the auto-advance
   // both read this back immediately, and a round trip later is too late to be
@@ -1781,18 +1822,21 @@ function nearEnd() {
 // Leaving a video in its closing stretch still finished it. The play was
 // already counted when the player opened, so without this the video comes back
 // as unwatched and has to be marked by hand — which is exactly what skipping
-// past the last few seconds used to do. An early skip is a different act and is
-// deliberately left alone: that one really is "not now".
-function advanceQueue(auto = false) {
+// past the last few seconds used to do. Before that, pressing `next` (`skip`)
+// means "not interested" and the video leaves the unwatched list; every other
+// way of moving on — the auto-advance, closing, Esc — says nothing about it.
+function advanceQueue(auto = false, skip = false) {
   if (!hasNextInQueue()) return;
   const leaving = playingVideo;
   // Read before the switch: openPlayer below reassigns the player out from
   // under both of these.
   const leavingAt = currentPosition();
   if (leaving && leaving.watch_status !== "watched" && nearEnd()) markWatched(leaving);
-  // An early skip is a "not now", so the place it got to is worth keeping —
-  // the videos that were effectively finished have just had it cleared by
-  // markWatched instead.
+  // A rewatch skipped early is still watched; anything else pressed away is
+  // not wanted, and a resume point on it would be one more thing to ignore.
+  else if (skip && leaving && leaving.watch_status !== "watched") markSkipped(leaving);
+  // Otherwise the place it got to is worth keeping — the videos that were
+  // effectively finished have just had it cleared by markWatched instead.
   else if (leaving && leavingAt) saveResume(leaving, leavingAt);
   playQueue.idx += 1;
   openPlayer(playQueue.list[playQueue.idx], playQueue);
@@ -1952,7 +1996,66 @@ $("bpBack").onclick = goBack;
 $("playerPrev").onclick = goBack;
 // Skipping forward by hand runs the same path the auto-advance does, so a
 // video left in its closing stretch is still marked watched on the way out.
-$("playerNext").onclick = () => { stopCountdown(); advanceQueue(); };
+$("playerNext").onclick = () => { stopCountdown(); advanceQueue(false, true); };
+
+// Dropping: "this is not worth my time". The same delete as the card's, so
+// History keeps a snapshot and a re-sync will not bring it back. The button
+// acts at once; the d key asks first, because a key is easy to hit by accident
+// and a click on a labelled button is not.
+let dropTarget = null;
+async function dropVideo(v = playingVideo) {
+  hideDropAsk();
+  if (!v) return;
+  try {
+    await api(`/videos/${v.id}`, { method: "DELETE" });
+  } catch (e) {
+    toast(`Could not drop: ${e.message}`, 6000);
+    return;
+  }
+  toast(`Dropped: ${v.title}`);
+  refreshCurrent();
+  // Moved on already (the video ended while this was in flight): nothing to do.
+  if (playingVideo !== v) return;
+  stopCountdown();
+  const queue = playQueue;
+  if (queue && queue.list[queue.idx + 1]) {
+    queue.list.splice(queue.idx, 1);  // `previous` must not lead back to it
+    openPlayer(queue.list[queue.idx], queue);
+  } else {
+    playingVideo = null;  // no position to keep: the row is gone
+    closePlayer();
+  }
+}
+function askDrop() {
+  if (!playingVideo) return;
+  dropTarget = playingVideo;  // the question is about this one, whatever plays next
+  $("dropAskVideo").textContent = dropTarget.title;
+  $("dropAsk").hidden = false;
+  $("dropYes").focus({ preventScroll: true });
+}
+function hideDropAsk({ refocus = true } = {}) {
+  if ($("dropAsk").hidden) return;
+  $("dropAsk").hidden = true;
+  dropTarget = null;
+  if (refocus) focusPlayer();
+}
+$("playerDrop").onclick = () => dropVideo();
+$("dropYes").onclick = () => dropVideo(dropTarget);
+$("dropNo").onclick = () => hideDropAsk();
+// While it asks, the question owns the keyboard: none of these may reach the
+// player's shortcuts or Esc's "close the player". Capture on window runs before
+// every document listener.
+window.addEventListener("keydown", (e) => {
+  if ($("dropAsk").hidden) return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === "d" || k === "y") dropVideo(dropTarget);
+  else if (k === "Escape" || k === "n") hideDropAsk();
+  else if (k === "Enter" || k === " ") {
+    (document.activeElement === $("dropNo") ? hideDropAsk : () => dropVideo(dropTarget))();
+  } else return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
 
 // the "next in line" is the following card in whatever grid you played from,
 // unless an explicit queue (e.g. a playlist) was handed in
@@ -1992,6 +2095,7 @@ async function openPlayer(v, queue = null) {
   hideBackPill();
   hideResumePill();
   hideStuckPill();
+  hideDropAsk({ refocus: false });
   syncQueueButtons();
   $("playerTitle").textContent = v.title;
   $("playerYt").href = `https://www.youtube.com/watch?v=${v.id}`;
@@ -2325,6 +2429,7 @@ function closePlayer() {
   hideBackPill();
   hideResumePill();
   hideStuckPill();
+  hideDropAsk({ refocus: false });
   $("playerPrev").hidden = true;
   $("playerNext").hidden = true;
   doneMode = false;
@@ -2389,6 +2494,7 @@ const PLAYER_KEYS = {
   ArrowLeft: () => seekBy(-5), ArrowRight: () => seekBy(5),
   j: () => seekBy(-10), l: () => seekBy(10),
   m: toggleMute,
+  d: askDrop,
 };
 
 document.addEventListener("keydown", (e) => {
@@ -2474,7 +2580,7 @@ function updateCard(oldEl, v) {
   const idx = gridCards(grid).indexOf(oldEl);
   const wasSel = grid === activeGrid() && idx === selIdx;
   if (grid === $("browseGrid") && $("unwatchedOnly").checked
-      && v.watch_status === "watched") {
+      && (v.watch_status || "unwatched") !== "unwatched") {
     oldEl.remove();
     if (wasSel) selectCard(Math.min(idx, gridCards(grid).length - 1));
     else if (grid === activeGrid() && idx > -1 && idx < selIdx) selIdx -= 1;
@@ -2773,7 +2879,7 @@ async function loadBrowse() {
     const data = await api(`/playlists/${encodeURIComponent(activePlaylist.id)}/videos`);
     if (seq !== browseSeq) return;
     let vids = data.videos;
-    if (unwatched) vids = vids.filter(v => v.watch_status !== "watched");
+    if (unwatched) vids = vids.filter(v => (v.watch_status || "unwatched") === "unwatched");
     if (offline) vids = vids.filter(v => v.download_status === "done");
     renderGrid(grid, vids, () => ({ queue: vids, playlist: data.playlist }));
     return;

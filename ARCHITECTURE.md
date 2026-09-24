@@ -369,10 +369,23 @@ python scripts/find_unavailable.py [--delete]    # videos YouTube no longer serv
   `endLead` is one definition of "the closing stretch" read two ways: how far
   out `#nextPill` starts warning, and — through `nearEnd` — how much of a video
   can be left when skipping it still counts as having watched it. `advanceQueue`
-  marks the outgoing video watched inside that window and deliberately leaves it
-  alone outside it (an early skip really is "not now"): a skip used to record
+  marks the outgoing video watched inside that window: a skip used to record
   the play counter and nothing else, so a video abandoned three seconds from the
-  end came back as unwatched and had to be marked by hand. An *automatic*
+  end came back as unwatched and had to be marked by hand. Outside it, only
+  `#playerNext` says anything — pressing it means "not interested", and the
+  video becomes `skipped` (`markSkipped`). Every other way of moving on (the
+  auto-advance, closing, Esc) is neutral. **"Unwatched" means status
+  `unwatched`**, in every filter, count and time-left sum, so a skipped video is
+  out of the next queue rather than served again; the card's "unskip" puts it
+  back. `#playerDrop` is the stronger answer, "not worth my time": the card's
+  delete from inside the player (history snapshot, re-sync won't return it),
+  then the next video, with the dropped one spliced out of the queue so
+  `previous` cannot lead back to it. The button acts at once; the `d` key asks
+  first through `#dropAsk`, because a key is easy to hit by accident. The
+  question sits inside `#playerHost` so it shows in fullscreen, is hidden with
+  the attribute (it covers the frame — see `#rateCard`), owns the keyboard from
+  a window capture listener while open, and holds `dropTarget` so a video that
+  advances underneath it is never the one dropped. An *automatic*
   advance also raises `#backPill` for 15s — nothing on screen asked for the
   video to change, so the way back has to be visible rather than remembered —
   and `#playerPrev` in the action row is the same move for as long as the queue

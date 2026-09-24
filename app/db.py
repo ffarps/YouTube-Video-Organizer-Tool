@@ -413,7 +413,7 @@ def list_themes(
     elif watched is False:
         count_expr = (
             "SUM(CASE WHEN vt.video_id IS NOT NULL "
-            "AND COALESCE(w.status, 'unwatched') != 'watched' THEN 1 ELSE 0 END)"
+            "AND COALESCE(w.status, 'unwatched') = 'unwatched' THEN 1 ELSE 0 END)"
         )
     else:
         count_expr = "SUM(CASE WHEN w.status = 'watched' THEN 1 ELSE 0 END)"
@@ -430,11 +430,11 @@ def list_themes(
                    COUNT(vt.video_id) AS total_count,
                    SUM(CASE WHEN w.status = 'watched' THEN 1 ELSE 0 END) AS watched_count,
                    COALESCE(SUM(v.duration_sec), 0) AS total_sec,
-                   COALESCE(SUM(CASE WHEN COALESCE(w.status, 'unwatched') != 'watched'
+                   COALESCE(SUM(CASE WHEN COALESCE(w.status, 'unwatched') = 'unwatched'
                        THEN MAX(v.duration_sec - COALESCE(w.resume_seconds, 0), 0)
                        END), 0) AS remaining_sec,
                    SUM(CASE WHEN vt.video_id IS NOT NULL AND v.duration_sec IS NULL
-                       AND COALESCE(w.status, 'unwatched') != 'watched'
+                       AND COALESCE(w.status, 'unwatched') = 'unwatched'
                        THEN 1 ELSE 0 END) AS unknown_duration
             FROM themes t
             LEFT JOIN video_themes vt ON vt.theme_id = t.id
@@ -594,7 +594,7 @@ def videos_by_theme(
     if watched is True:
         clauses.append("w.status = 'watched'")
     elif watched is False:
-        clauses.append("COALESCE(w.status, 'unwatched') != 'watched'")
+        clauses.append("COALESCE(w.status, 'unwatched') = 'unwatched'")
     if downloaded is True:
         clauses.append("d.status = 'done'")
     elif downloaded is False:
@@ -817,7 +817,7 @@ def list_videos(
     if watched is True:
         clauses.append("w.status = 'watched'")
     elif watched is False:
-        clauses.append("COALESCE(w.status, 'unwatched') != 'watched'")
+        clauses.append("COALESCE(w.status, 'unwatched') = 'unwatched'")
     if unthemed is True:
         clauses.append(
             "NOT EXISTS (SELECT 1 FROM video_themes vt WHERE vt.video_id = v.id)"
@@ -874,7 +874,7 @@ def count_videos(
     if watched is True:
         clauses.append("w.status = 'watched'")
     elif watched is False:
-        clauses.append("COALESCE(w.status, 'unwatched') != 'watched'")
+        clauses.append("COALESCE(w.status, 'unwatched') = 'unwatched'")
     if mode:
         clauses.append(_MODE_CLAUSE)
         params.append(mode)
@@ -1110,8 +1110,9 @@ def set_watch_state(
         # Finishing a video retires its resume point: offering to continue
         # something you have already marked watched is noise, and the stale
         # position would otherwise send a rewatch back to wherever you gave up
-        # the first time.
-        if status == "watched":
+        # the first time. A skip — the player's "next" pressed early, meaning
+        # "not interested" — has nothing worth coming back to either.
+        if status in ("watched", "skipped"):
             conn.execute(
                 "UPDATE watch_state SET resume_seconds = NULL, resume_at = NULL"
                 " WHERE video_id = ?",
@@ -1356,10 +1357,10 @@ def history_stats(conn: sqlite3.Connection, now: Optional[datetime] = None) -> d
             """
             SELECT COUNT(*) AS library_videos,
                    COALESCE(SUM(v.duration_sec), 0) AS library_sec,
-                   COALESCE(SUM(CASE WHEN COALESCE(w.status, 'unwatched') != 'watched'
+                   COALESCE(SUM(CASE WHEN COALESCE(w.status, 'unwatched') = 'unwatched'
                        THEN MAX(v.duration_sec - COALESCE(w.resume_seconds, 0), 0)
                        END), 0) AS remaining_sec,
-                   SUM(CASE WHEN COALESCE(w.status, 'unwatched') != 'watched'
+                   SUM(CASE WHEN COALESCE(w.status, 'unwatched') = 'unwatched'
                        THEN 1 ELSE 0 END) AS remaining_videos
               FROM videos v LEFT JOIN watch_state w ON w.video_id = v.id
             """

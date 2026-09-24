@@ -713,3 +713,24 @@ def test_merged_theme_keeps_a_mode(client):
     client.post("/themes", json={"name": "Learning"})
     client.patch("/themes/AI", json={"name": "Learning"})  # merge into a mode-less theme
     assert _ids(client.get("/videos?mode=study")) == {"aivideo00ok"}
+
+
+def test_skipped_video_leaves_the_unwatched_lists(client):
+    # skipping from the player means "not interested": it must not come back
+    # in the next unwatched queue, theme count or time left
+    client.post("/videos", json={"url": "guitar000ok"})
+    client.post("/videos", json={"url": "aivideo00ok"})
+    client.post("/videos/aivideo00ok/position", json={"seconds": 300})
+    client.patch("/videos/aivideo00ok/watch-state", json={"status": "skipped"})
+
+    assert _ids(client.get("/videos?watched=false")) == {"guitar000ok"}
+    assert _ids(client.get("/themes/AI/videos?watched=false")) == set()
+    assert _ids(client.get("/videos")) == {"guitar000ok", "aivideo00ok"}
+    ai = next(t for t in client.get("/themes?watched=false").json()["themes"] if t["name"] == "AI")
+    assert ai["video_count"] == 0 and ai["remaining_sec"] == 0
+    assert client.get("/themes?watched=false").json()["total_videos"] == 1
+    assert client.get("/videos/aivideo00ok").json()["resume_seconds"] is None
+
+    # "unskip" on the card is the way back
+    client.patch("/videos/aivideo00ok/watch-state", json={"status": "unwatched"})
+    assert _ids(client.get("/videos?watched=false")) == {"guitar000ok", "aivideo00ok"}
